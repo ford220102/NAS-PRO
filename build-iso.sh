@@ -1,145 +1,129 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-echo "=== NAS-PRO STABLE v2 DESKTOP OS ==="
+echo "=== NAS-PRO v3 STABLE BUILDER ==="
 
-WORKDIR=/tmp/nas-pro
-ROOTFS=$WORKDIR/rootfs
-ISO=$WORKDIR/iso
+DIST=bookworm
+ARCH=amd64
+LB_DIR=lb
 OUTPUT=nas-pro.iso
 
-rm -rf $WORKDIR
-mkdir -p $ROOTFS $ISO/boot/grub $ISO/live
+rm -rf $LB_DIR
+mkdir -p $LB_DIR
+cd $LB_DIR
 
-# -----------------------------
-# BASE SYSTEM
-# -----------------------------
-debootstrap --arch=amd64 bookworm $ROOTFS http://deb.debian.org/debian
+# -------------------------
+# LIVE-BUILD CONFIG
+# -------------------------
+lb config \
+  --distribution $DIST \
+  --architecture $ARCH \
+  --binary-images iso-hybrid \
+  --bootloader grub-efi \
+  --debian-installer false \
+  --archive-areas "main contrib non-free non-free-firmware" \
+  --firmware-chroot true \
+  --initsystem systemd
 
-cat > $ROOTFS/etc/apt/sources.list <<EOF
-deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware
-deb http://security.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware
+# -------------------------
+# PACKAGES (NO KERNEL!)
+# -------------------------
+mkdir -p config/package-lists
+
+cat > config/package-lists/naspro.list.chroot <<EOF
+systemd
+systemd-sysv
+dbus
+sudo
+nginx
+openssh-server
+network-manager
+curl
+wget
+git
+nodejs
+npm
+live-boot
+live-config
 EOF
 
-chroot $ROOTFS apt-get update
+# -------------------------
+# UI INJECTION (React/Vite)
+# -------------------------
+mkdir -p config/includes.chroot/var/www/nas-pro
 
-chroot $ROOTFS apt-get install -y \
-  systemd systemd-sysv dbus sudo \
-  linux-image-amd64 initramfs-tools \
-  nginx openssh-server curl wget git \
-  xorg openbox lightdm \
-  chromium \
-  network-manager \
-  live-boot live-config
-
-# -----------------------------
-# USERS
-# -----------------------------
-echo "nas-pro" > $ROOTFS/etc/hostname
-echo "root:naspro" | chroot $ROOTFS chpasswd
-
-chroot $ROOTFS useradd -m -s /bin/bash naspro || true
-echo "naspro:naspro" | chroot $ROOTFS chpasswd
-chroot $ROOTFS usermod -aG sudo naspro
-
-# -----------------------------
-# UI (React/Vite DESKTOP MODE)
-# -----------------------------
-mkdir -p $ROOTFS/var/www/nas-pro
-
-if [ -d "dist" ]; then
-    cp -r dist/* $ROOTFS/var/www/nas-pro/
+if [ -d "../dist" ]; then
+  cp -r ../dist/* config/includes.chroot/var/www/nas-pro/
 else
-    cat > $ROOTFS/var/www/nas-pro/index.html <<EOF
-<!DOCTYPE html>
-<html>
-<head>
-  <title>NAS-PRO Desktop</title>
-  <style>
-    body { margin:0; font-family:sans-serif; background:#0f172a; color:white; }
-    .bar { height:50px; background:#111827; display:flex; align-items:center; padding:10px; }
-    .grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; padding:20px; }
-    .card { background:#1f2937; padding:20px; border-radius:10px; text-align:center; }
-  </style>
-</head>
-<body>
-  <div class="bar">NAS-PRO Desktop OS</div>
-  <div class="grid">
-    <div class="card">📁 Files</div>
-    <div class="card">🌐 Browser</div>
-    <div class="card">⚙️ Settings</div>
-    <div class="card">💾 Storage</div>
-  </div>
-</body>
-</html>
-EOF
+  echo "<h1>NAS-PRO v3 UI</h1>" > config/includes.chroot/var/www/nas-pro/index.html
 fi
 
-chown -R www-data:www-data $ROOTFS/var/www/nas-pro
+# -------------------------
+# NGINX CONFIG
+# -------------------------
+mkdir -p config/includes.chroot/etc/nginx/sites-available
 
-# -----------------------------
-# NGINX UI SERVER
-# -----------------------------
-cat > $ROOTFS/etc/nginx/sites-available/default <<EOF
+cat > config/includes.chroot/etc/nginx/sites-available/default <<EOF
 server {
-    listen 80;
-    root /var/www/nas-pro;
-    index index.html;
+  listen 80;
+  root /var/www/nas-pro;
+  index index.html;
 
-    location / {
-        try_files \$uri \$uri/ /index.html;
-    }
+  location / {
+    try_files \$uri \$uri/ /index.html;
+  }
 
-    location /api {
-        proxy_pass http://localhost:3000;
-    }
+  location /api {
+    proxy_pass http://localhost:3000;
+  }
 }
 EOF
 
-# -----------------------------
-# ENABLE SERVICES
-# -----------------------------
-chroot $ROOTFS systemctl enable nginx
-chroot $ROOTFS systemctl enable ssh
+# -------------------------
+# BACKEND (NODE API)
+# -------------------------
+mkdir -p config/includes.chroot/opt/naspro
 
-# -----------------------------
-# INITRAMFS + KERNEL FIX
-# -----------------------------
-chroot $ROOTFS update-initramfs -u -k all
+cat > config/includes.chroot/opt/naspro/server.js <<EOF
+const http = require('http');
 
-VMLINUX=$(ls $ROOTFS/boot/vmlinuz-* | head -n1)
-INITRD=$(ls $ROOTFS/boot/initrd.img-* | head -n1)
-
-cp "$VMLINUX" $ISO/boot/vmlinuz
-cp "$INITRD" $ISO/boot/initrd.img
-
-# -----------------------------
-# SQUASHFS
-# -----------------------------
-mksquashfs $ROOTFS $ISO/live/filesystem.squashfs -e boot
-
-# -----------------------------
-# GRUB UI BOOT
-# -----------------------------
-cat > $ISO/boot/grub/grub.cfg <<EOF
-set timeout=3
-set default=0
-
-menuentry "NAS-PRO Desktop UI" {
-    linux /boot/vmlinuz boot=live quiet splash
-    initrd /boot/initrd.img
-}
-
-menuentry "NAS-PRO Debug Mode" {
-    linux /boot/vmlinuz boot=live debug
-    initrd /boot/initrd.img
-}
+http.createServer((req,res)=>{
+  res.writeHead(200, {'Content-Type':'application/json'});
+  res.end(JSON.stringify({status:'ok', system:'NAS-PRO v3'}));
+}).listen(3000);
 EOF
 
-# -----------------------------
+# -------------------------
+# SYSTEMD API
+# -------------------------
+mkdir -p config/includes.chroot/etc/systemd/system
+
+cat > config/includes.chroot/etc/systemd/system/naspro.service <<EOF
+[Unit]
+Description=NAS-PRO API
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/node /opt/naspro/server.js
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# -------------------------
 # BUILD ISO
-# -----------------------------
-grub-mkrescue -o $OUTPUT $ISO
+# -------------------------
+lb build
 
-echo "=== BUILD DONE ==="
-ls -lh $OUTPUT
+cd ..
+
+ISO_FILE=$(ls lb/live-image-amd64.hybrid.iso 2>/dev/null || true)
+
+if [ -f "$ISO_FILE" ]; then
+  mv "$ISO_FILE" $OUTPUT
+  echo "SUCCESS: $OUTPUT"
+else
+  echo "FAILED BUILD"
+  exit 1
+fi

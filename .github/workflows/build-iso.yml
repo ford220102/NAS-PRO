@@ -1,4 +1,4 @@
-name: NAS-PRO Stable ISO
+name: NAS-PRO v3 Stable Builder
 
 on:
   push:
@@ -11,18 +11,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install live-build
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            live-build \
             debootstrap \
             squashfs-tools \
             xorriso \
             grub-pc-bin \
             grub-efi-amd64-bin \
-            mtools \
-            linux-image-amd64 \
-            initramfs-tools
+            mtools
+
+      - name: Build React UI
+        run: |
+          npm ci
+          npm run build
 
       - name: Build ISO
         run: chmod +x build-iso.sh && sudo ./build-iso.sh
@@ -30,5 +34,5 @@ jobs:
       - name: Upload ISO
         uses: actions/upload-artifact@v4
         with:
-          name: nas-pro-iso
+          name: nas-pro-v3
           path: nas-pro.iso
