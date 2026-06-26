@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "=== NAS-PRO CLEAN ISO BUILDER (STABLE) ==="
+echo "=== NAS-PRO FULL ISO BUILDER (STABLE) ==="
 
 WORKDIR=/tmp/nas-pro
 ROOTFS=$WORKDIR/rootfs
@@ -12,7 +12,7 @@ rm -rf $WORKDIR
 mkdir -p $ROOTFS $ISO/boot/grub $ISO/live
 
 # -----------------------------
-# 1. BASE SYSTEM
+# 1. ROOTFS (NO KERNEL HERE!)
 # -----------------------------
 debootstrap --arch=amd64 bookworm $ROOTFS http://deb.debian.org/debian
 
@@ -24,15 +24,13 @@ EOF
 chroot $ROOTFS apt-get update
 
 chroot $ROOTFS apt-get install -y \
-  linux-image-amd64 \
-  initramfs-tools \
   systemd systemd-sysv dbus sudo \
   nginx openssh-server curl wget git \
   samba nfs-kernel-server \
-  live-boot live-config
+  initramfs-tools live-boot live-config
 
 # -----------------------------
-# 2. UI SETUP (NAS OS WEB UI)
+# 2. NAS-PRO UI (WEB OS)
 # -----------------------------
 echo "nas-pro" > $ROOTFS/etc/hostname
 
@@ -45,19 +43,38 @@ else
 <!doctype html>
 <html>
 <head>
+  <meta charset="utf-8">
   <title>NAS-PRO OS</title>
   <style>
-    body { font-family: sans-serif; background:#0f172a; color:white; text-align:center; padding-top:80px; }
+    body {
+      margin:0;
+      background:#0b1220;
+      color:white;
+      font-family:Arial;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      height:100vh;
+      flex-direction:column;
+    }
+    .card {
+      padding:20px;
+      background:#111827;
+      border-radius:12px;
+    }
   </style>
 </head>
 <body>
-  <h1>NAS-PRO OS</h1>
-  <p>System booted successfully</p>
+  <div class="card">
+    <h1>NAS-PRO OS</h1>
+    <p>System running ✔</p>
+  </div>
 </body>
 </html>
 EOF
 fi
 
+# nginx config (OS UI root)
 cat > $ROOTFS/etc/nginx/sites-available/default <<EOF
 server {
     listen 80 default_server;
@@ -70,9 +87,10 @@ server {
 }
 EOF
 
+# systemd service (UI AUTO START)
 cat > $ROOTFS/etc/systemd/system/nas-ui.service <<EOF
 [Unit]
-Description=NAS-PRO UI
+Description=NAS-PRO UI Layer
 After=network.target
 
 [Service]
@@ -87,15 +105,15 @@ chroot $ROOTFS systemctl enable nas-ui.service
 chroot $ROOTFS systemctl enable ssh
 
 # -----------------------------
-# 3. KERNEL + INITRAMFS SAFE PICK
+# 3. KERNEL + INITRAMFS (HOST SAFE)
 # -----------------------------
 chroot $ROOTFS update-initramfs -u -k all
 
-VMLINUX=$(find $ROOTFS/boot -name "vmlinuz*" | head -n1)
-INITRD=$(find $ROOTFS/boot -name "initrd.img*" | head -n1)
+VMLINUX=$(find /boot -name "vmlinuz*" | head -n1)
+INITRD=$(find /boot -name "initrd.img*" | head -n1)
 
 if [ -z "$VMLINUX" ] || [ -z "$INITRD" ]; then
-    echo "ERROR: kernel missing in rootfs"
+    echo "ERROR: kernel not found on host"
     exit 1
 fi
 
@@ -103,12 +121,12 @@ cp "$VMLINUX" $ISO/boot/vmlinuz
 cp "$INITRD" $ISO/boot/initrd.img
 
 # -----------------------------
-# 4. SQUASHFS
+# 4. SQUASHFS (LIVE SYSTEM)
 # -----------------------------
 mksquashfs $ROOTFS $ISO/live/filesystem.squashfs -e boot
 
 # -----------------------------
-# 5. GRUB BOOT
+# 5. GRUB BOOT MENU
 # -----------------------------
 cat > $ISO/boot/grub/grub.cfg <<EOF
 set timeout=3

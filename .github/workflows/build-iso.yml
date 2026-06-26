@@ -11,19 +11,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # FRONTEND BUILD (React/Vite)
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
       - name: Install deps
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      # ISO tools
+      - name: Install ISO deps
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             debootstrap squashfs-tools xorriso \
             grub-pc-bin grub-efi-amd64-bin mtools \
-            linux-image-amd64
+            live-boot live-config linux-image-amd64
 
+      # BUILD
       - name: Build ISO
         run: |
           chmod +x build-iso.sh
           sudo ./build-iso.sh
 
+      # ARTIFACT (NIE COMMITUJ ISO)
       - name: Upload ISO
         uses: actions/upload-artifact@v4
         with:
