@@ -17,7 +17,6 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          # Używamy --no-install-recommends, aby uniknąć konfliktu między grub-pc a grub-efi
           sudo apt-get install -y --no-install-recommends \
             live-build \
             debootstrap \
@@ -28,7 +27,7 @@ jobs:
             grub-pc-bin \
             grub-efi-amd64-bin \
             mtools
-
+            
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
