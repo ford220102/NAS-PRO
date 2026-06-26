@@ -1,4 +1,4 @@
-name: NAS-PRO v3 — Build ISO
+name: NAS-PRO v3 — Build ISO (Kiosk)
 
 on:
   push:
@@ -8,20 +8,20 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
 
-      # ── Buduj React UI ──────────────────────────────────
-      - name: Zainstaluj zależności Node
+      # ── React UI ────────────────────────────────────────
+      - name: Zainstaluj zależności npm
         run: npm ci
 
       - name: Zbuduj React UI → dist/
@@ -29,14 +29,14 @@ jobs:
         env:
           NODE_ENV: production
 
-      - name: Sprawdź dist/
+      - name: Weryfikuj dist/
         run: |
+          echo "=== Zawartość dist/ ==="
           ls -lh dist/
-          echo "Pliki w dist/:"
-          find dist/ -type f | head -20
+          echo "index.html: $(wc -c < dist/index.html) bajtów"
 
-      # ── Narzędzia do budowania ISO ──────────────────────
-      - name: Zainstaluj narzędzia ISO
+      # ── Narzędzia ISO ──────────────────────────────────
+      - name: Zainstaluj narzędzia do budowania ISO
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
@@ -44,20 +44,22 @@ jobs:
             grub-pc-bin grub-efi-amd64-bin \
             mtools dosfstools curl
 
-      # ── Buduj ISO ───────────────────────────────────────
-      - name: Zbuduj ISO (z React UI)
+      # ── Buduj ISO ──────────────────────────────────────
+      - name: Buduj ISO (dist/ jest w katalogu roboczym)
         run: |
-          chmod +x build-iso.sh
-          sudo ./build-iso.sh nas-pro.iso
-        # dist/ jest w katalogu roboczym — build-iso.sh go wykryje i wbuduje
+          chmod +x build-iso-v5.sh
+          sudo ./build-iso-v5.sh nas-pro.iso
+        # build-iso-v5.sh wykryje dist/ w SCRIPT_DIR i wbuduje React UI
 
-      - name: Sprawdź rozmiar ISO
-        run: ls -lh nas-pro.iso
+      - name: Weryfikuj ISO
+        run: |
+          ls -lh nas-pro.iso
+          echo "Rozmiar: $(du -sh nas-pro.iso | cut -f1)"
 
-      # ── Upload ──────────────────────────────────────────
+      # ── Upload ─────────────────────────────────────────
       - name: Upload ISO
         uses: actions/upload-artifact@v4
         with:
-          name: nas-pro-v3-iso
+          name: nas-pro-v3-kiosk-iso
           path: nas-pro.iso
           retention-days: 14
