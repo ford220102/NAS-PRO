@@ -1,0 +1,95 @@
+#!/bin/bash
+set -e
+
+# Configure nginx to serve the built frontend
+mkdir -p /var/www/nas-pro
+cp -r /usr/share/nas-pro/dist/* /var/www/nas-pro/
+
+chown -R www-data:www-data /var/www/nas-pro
+chmod -R 755 /var/www/nas-pro
+
+# Configure nginx default site
+cat > /etc/nginx/sites-available/default << 'NGINX'
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    root /var/www/nas-pro;
+    index index.html;
+    server_name _;
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+    location /api {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+NGINX
+
+# Enable nginx
+systemctl enable nginx
+
+# Create nas-pro service user
+useradd -r -s /bin/false -d /var/lib/nas-pro -M nas-pro || true
+
+# Set up NAS Pro backend service
+mkdir -p /opt/nas-pro
+cat > /opt/nas-pro/start.sh << 'START'
+#!/bin/bash
+cd /opt/nas-pro
+# Backend start command would go here
+# For now, we'll just serve the static frontend
+START
+chmod +x /opt/nas-pro/start.sh
+
+# Create systemd service for NAS Pro backend
+cat > /etc/systemd/system/nas-pro.service << 'SERVICE'
+[Unit]
+Description=NAS Pro Backend Service
+After=network.target
+
+[Service]
+Type=simple
+User=nas-pro
+WorkingDirectory=/opt/nas-pro
+ExecStart=/opt/nas-pro/start.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+systemctl enable nas-pro
+
+# Configure SSH for root access with password (for live environment)
+sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+systemctl enable ssh
+
+# Set root password for live environment
+echo 'root:naspro' | chpasswd
+
+# Create default user
+useradd -m -s /bin/bash -G sudo,www-data naspro || true
+echo 'naspro:naspro' | chpasswd
+
+# Configure network
+mkdir -p /etc/systemd/network
+cat > /etc/systemd/network/20-wired.network << 'NETWORK'
+[Match]
+Name=en*
+Name=eth*
+
+[Network]
+DHCP=yes
+NETWORK
+
+systemctl enable systemd-networkd
+systemctl enable systemd-resolved
