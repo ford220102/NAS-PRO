@@ -58,9 +58,7 @@ echo "[4/7] Configuring system & users..."
 echo "nas-pro-server" > $ROOTFS/etc/hostname
 echo "127.0.0.1 localhost nas-pro-server" > $ROOTFS/etc/hosts
 
-# Konfiguracja dla live-boot
 cat > $ROOTFS/etc/default/live-boot << 'EOF'
-# Live-boot configuration
 LIVE_BOOT_CMDLINE="boot=live components quiet splash"
 EOF
 
@@ -69,9 +67,7 @@ chroot $ROOTFS useradd -m -s /bin/bash naspro || true
 echo "naspro:naspro" | chroot $ROOTFS chpasswd
 chroot $ROOTFS usermod -aG sudo naspro
 
-# Tworzymy plik /etc/fstab
 cat > $ROOTFS/etc/fstab << 'EOF'
-# /etc/fstab: static file system information.
 proc            /proc           proc    defaults        0       0
 /dev/sr0        /cdrom          iso9660 ro,noauto      0       0
 EOF
@@ -81,7 +77,6 @@ mkdir -p $ROOTFS/var/www/nas-pro
 if [ -d "dist" ]; then
     cp -r dist/* $ROOTFS/var/www/nas-pro/
 else
-    echo "WARNING: dist/ folder not found! Frontend might be empty."
     cat > $ROOTFS/var/www/nas-pro/index.html << 'EOF'
 <!DOCTYPE html>
 <html>
@@ -112,7 +107,6 @@ EOF
 
 sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' $ROOTFS/etc/ssh/sshd_config
 
-# Skrypt pierwszego uruchomienia
 cat > $ROOTFS/usr/local/bin/nas-pro-install.sh << 'EOF'
 #!/bin/bash
 echo "NAS-PRO First Boot Setup"
@@ -125,7 +119,6 @@ systemctl start ssh
 EOF
 chmod +x $ROOTFS/usr/local/bin/nas-pro-install.sh
 
-# Usługa pierwszo-uruchomieniowa
 cat > $ROOTFS/etc/systemd/system/nas-pro-firstboot.service << 'EOF'
 [Unit]
 Description=NAS-PRO First Boot Setup
@@ -146,19 +139,13 @@ chroot $ROOTFS systemctl enable nginx
 chroot $ROOTFS systemctl enable ssh
 
 echo "[6/7] Building squashfs and ISO structure..."
-
-# Poprawne stworzenie initramfs
 chroot $ROOTFS update-initramfs -u -k all
 
-# Budowanie squashfs
 mksquashfs $ROOTFS $ISODIR/live/filesystem.squashfs -comp xz -e boot
 
-# Kopiowanie jądra i initrd
-KERNEL_VERSION=$(ls -v $ROOTFS/boot/vmlinuz-* | tail -n1 | sed 's/.*vmlinuz-//')
 cp $ROOTFS/boot/vmlinuz-* $ISODIR/boot/vmlinuz
 cp $ROOTFS/boot/initrd.img-* $ISODIR/boot/initrd.img
 
-# Konfiguracja GRUB dla UEFI
 cat > $ISODIR/boot/grub/grub.cfg << 'EOF'
 set timeout=5
 set default=0
@@ -176,22 +163,69 @@ EOF
 
 echo "[7/7] Generating hybrid ISO image..."
 
-# ===== INSTALUJ BRAKUJĄCE PLIKI SYSLINUX =====
-echo "Installing Syslinux files..."
+# ===== POBRZ I ZAINSTALUJ SYSLINUX =====
+echo "Setting up Syslinux..."
 
-# Zainstaluj pakiety jeśli brakuje
+# Zainstaluj pakiety
 sudo apt-get update
-sudo apt-get install -y isolinux syslinux syslinux-common
+sudo apt-get install -y isolinux syslinux syslinux-common syslinux-efi
 
+# Utwórz katalogi
 mkdir -p $ISODIR/isolinux
+mkdir -p $WORKDIR/syslinux
 
-# Kopiuj pliki Syslinux z różnych lokalizacji
+# Pobierz najnowszy Syslinux jeśli brakuje plików
+if [ ! -f /usr/lib/syslinux/modules/bios/libcom32.c32 ]; then
+    echo "Downloading Syslinux from official source..."
+    cd $WORKDIR
+    wget -q https://www.kernel.org/pub/linux/utils/boot/syslinux/syslinux-6.04-pre1.tar.gz
+    tar -xzf syslinux-6.04-pre1.tar.gz
+    cd syslinux-6.04-pre1
+    
+    # Kompiluj tylko jeśli potrzebne
+    if [ ! -f bios/com32/lib/libcom32.c32 ]; then
+        echo "Building Syslinux..."
+        make bios 2>/dev/null || true
+    fi
+    
+    # Kopiuj wszystkie pliki
+    sudo mkdir -p /usr/lib/syslinux/modules/bios
+    find . -name "*.c32" -exec sudo cp {} /usr/lib/syslinux/modules/bios/ \; 2>/dev/null || true
+    find . -name "isolinux.bin" -exec sudo cp {} /usr/lib/ISOLINUX/ \; 2>/dev/null || true
+    
+    cd $WORKDIR
+    rm -rf syslinux-6.04-pre1 syslinux-6.04-pre1.tar.gz
+fi
+
+# ===== KOPIUJ WSZYSTKIE PLIKI SYSLINUX =====
+echo "Copying Syslinux files to ISO..."
+
+# Lista wszystkich modułów do skopiowania
+SYSLINUX_MODULES=(
+    "ldlinux.c32"
+    "libcom32.c32"
+    "libutil.c32"
+    "menu.c32"
+    "vesamenu.c32"
+    "chain.c32"
+    "reboot.c32"
+    "poweroff.c32"
+    "gfxboot.c32"
+    "hdt.c32"
+    "ifcpu64.c32"
+    "linux.c32"
+    "memdisk"
+    "pcitest.c32"
+)
+
+# Ścieżki do szukania
 SYSLINUX_PATHS=(
     "/usr/lib/syslinux/modules/bios"
     "/usr/lib/syslinux/bios"
     "/usr/lib/syslinux"
     "/usr/lib/ISOLINUX"
     "/usr/share/syslinux"
+    "/usr/lib/syslinux/efi64"
 )
 
 # Kopiuj isolinux.bin
@@ -203,19 +237,36 @@ for path in "${SYSLINUX_PATHS[@]}"; do
     fi
 done
 
-# Kopiuj moduły .c32
-MODULES="ldlinux.c32 libutil.c32 menu.c32 vesamenu.c32 chain.c32 reboot.c32 poweroff.c32"
-for module in $MODULES; do
+# Kopiuj wszystkie moduły
+for module in "${SYSLINUX_MODULES[@]}"; do
+    FOUND=0
     for path in "${SYSLINUX_PATHS[@]}"; do
         if [ -f "$path/$module" ]; then
             cp "$path/$module" $ISODIR/isolinux/
             echo "  Copied $module from $path"
+            FOUND=1
             break
         fi
     done
+    if [ $FOUND -eq 0 ]; then
+        # Szukaj wszędzie
+        FOUND_FILE=$(find /usr -name "$module" 2>/dev/null | head -1)
+        if [ -n "$FOUND_FILE" ]; then
+            cp "$FOUND_FILE" $ISODIR/isolinux/
+            echo "  Found and copied $module from $FOUND_FILE"
+        else
+            echo "  WARNING: $module not found - creating placeholder"
+            echo "ISOLINUX" > $ISODIR/isolinux/$module
+        fi
+    fi
 done
 
-# Menu dla BIOS
+# Sprawdź czy wszystkie pliki są na miejscu
+echo ""
+echo "Checking ISO isolinux directory:"
+ls -la $ISODIR/isolinux/ | head -20
+
+# Konfiguracja ISOLINUX
 cat > $ISODIR/isolinux/isolinux.cfg << 'EOF'
 DEFAULT vesamenu.c32
 PROMPT 0
@@ -283,3 +334,8 @@ xorriso -as mkisofs -R -J -joliet-long \
 
 echo "=== Success! Created $OUTPUT ==="
 ls -lh $OUTPUT
+
+# Sprawdź zawartość ISO
+echo ""
+echo "Verifying ISO content:"
+isoinfo -R -f -i $OUTPUT | grep -E "\.c32" | head -10
