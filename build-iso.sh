@@ -24,7 +24,6 @@ EOF
 
 echo "[3/7] Installing system packages..."
 chroot $ROOTFS apt-get update
-# NAPRAWA: Instalujemy tylko -bin, aby uniknąć konfliktów grub-pc <-> grub-efi-amd64
 chroot $ROOTFS apt-get install -y --no-install-recommends \
   linux-image-amd64 \
   grub-pc-bin \
@@ -124,12 +123,12 @@ mksquashfs $ROOTFS $ISODIR/live/filesystem.squashfs -comp xz -e boot
 cp $(ls -v $ROOTFS/boot/vmlinuz-* | tail -n1) $ISODIR/boot/vmlinuz
 cp $(ls -v $ROOTFS/boot/initrd.img-* | tail -n1) $ISODIR/boot/initrd.img
 
-# Konfiguracja GRUB dla ISO
+# Konfiguracja GRUB dla trybu UEFI (zostanie odczytana z ISO)
 cat > $ISODIR/boot/grub/grub.cfg << 'EOF'
 set timeout=5
 set default=0
 
-menuentry "Install NAS-PRO" {
+menuentry "Install NAS-PRO (UEFI Mode)" {
     linux /boot/vmlinuz boot=live quiet splash
     initrd /boot/initrd.img
 }
@@ -137,43 +136,50 @@ EOF
 
 echo "[7/7] Generating hybrid ISO image..."
 
-# 1. Tworzenie katalogów struktury GRUB w ISO
-mkdir -p $ISODIR/boot/grub/i386-pc
-mkdir -p $ISODIR/boot/grub/x86_64-efi
+# 1. Przygotowanie stabilnego bootloadera ISOLINUX dla trybu BIOS
+mkdir -p $ISODIR/isolinux
+cp /usr/lib/ISOLINUX/isolinux.bin $ISODIR/isolinux/
+cp /usr/lib/syslinux/modules/bios/ldlinux.c32 $ISODIR/isolinux/
+cp /usr/lib/syslinux/modules/bios/menu.c32 $ISODIR/isolinux/
+cp /usr/lib/syslinux/modules/bios/libutil.c32 $ISODIR/isolinux/
 
-# 2. Skopiowanie PEŁNEJ bazy modułów do struktury ISO (będą ładowane z płyty)
-cp /usr/lib/grub/i386-pc/*.mod $ISODIR/boot/grub/i386-pc/
-cp /usr/lib/grub/i386-pc/*.lst $ISODIR/boot/grub/i386-pc/
+# Menu dla trybu BIOS (ISOLINUX)
+cat > $ISODIR/isolinux/isolinux.cfg << 'EOF'
+DEFAULT menu.c32
+PROMPT 0
+TIMEOUT 50
+
+MENU TITLE NAS-PRO Boot Menu (BIOS)
+
+LABEL install
+    MENU LABEL Install NAS-PRO System
+    KERNEL /boot/vmlinuz
+    APPEND initrd=/boot/initrd.img boot=live quiet splash
+EOF
+
+# 2. Przygotowanie czystego obrazu rozruchowego dla trybu UEFI przy użyciu lekkiego grub-mkimage
+mkdir -p $ISODIR/boot/grub/x86_64-efi
 cp /usr/lib/grub/x86_64-efi/*.mod $ISODIR/boot/grub/x86_64-efi/
 cp /usr/lib/grub/x86_64-efi/*.lst $ISODIR/boot/grub/x86_64-efi/
 
-# 3. Generowanie obrazu core dla BIOS (i386-pc)
-# KLUCZOWA ZMIANA: --install-modules ogranicza pakiety wbudowane w plik binarny,
-# a grub.cfg jest ładowany bezpośrednio z katalogu tekstowego ISO.
-grub-mkstandalone -d /usr/lib/grub/i386-pc/ \
-  -O i386-pc \
-  --install-modules="biosdisk part_msdos part_gpt iso9660 normal search" \
-  --modules="biosdisk part_msdos part_gpt iso9660 normal search" \
-  -o $ISODIR/boot/grub/i386-pc/eltorito.img
-
-# 4. Generowanie obrazu dla UEFI (x86_64-efi)
 mkdir -p $WORKDIR/efi/boot
-grub-mkstandalone -d /usr/lib/grub/x86_64-efi/ \
+grub-mkimage -d /usr/lib/grub/x86_64-efi/ \
   -O x86_64-efi \
-  --install-modules="part_msdos part_gpt iso9660 normal search" \
-  --modules="part_msdos part_gpt iso9660 normal search" \
-  -o $WORKDIR/efi/boot/bootx64.efi
+  -o $WORKDIR/efi/boot/bootx64.efi \
+  -p "/boot/grub" \
+  part_msdos part_gpt iso9660 normal search
 
-# Pakowanie UEFI do dedykowanego obrazu FAT (wymóg UEFI)
+# Pakowanie pliku .efi do obrazu FAT wymagane przez specyfikację UEFI
 dd if=/dev/zero of=$ISODIR/boot/grub/efi.img bs=1M count=4
 mkfs.vfat $ISODIR/boot/grub/efi.img
 mmd -i $ISODIR/boot/grub/efi.img ::/EFI
 mmd -i $ISODIR/boot/grub/efi.img ::/EFI/BOOT
 mcopy -i $ISODIR/boot/grub/efi.img $WORKDIR/efi/boot/bootx64.efi ::/EFI/BOOT/BOOTX64.EFI
 
-# 5. Budowanie hybrydowego ISO przez xorriso
+# 3. Budowanie ostatecznego hybrydowego ISO przez xorriso
 xorriso -as mkisofs -R -J -joliet-long \
-  -b boot/grub/i386-pc/eltorito.img \
+  -b isolinux/isolinux.bin \
+  -c isolinux/boot.cat \
   -no-emul-boot -boot-load-size 4 -boot-info-table \
   -eltorito-alt-boot \
   -e boot/grub/efi.img \
