@@ -17,7 +17,8 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          # Używamy --no-install-recommends, aby uniknąć konfliktu między grub-pc a grub-efi
+          sudo apt-get install -y --no-install-recommends \
             live-build \
             debootstrap \
             squashfs-tools \
@@ -58,5 +59,3 @@ jobs:
         with:
           name: nas-pro-debian-iso
           path: ${{ steps.find_iso.outputs.iso_path }}
-          retention-days: 30
-          if-no-files-found: error
