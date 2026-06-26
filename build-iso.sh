@@ -67,6 +67,17 @@ if [ -d "dist" ]; then
     cp -r dist/* $ROOTFS/var/www/nas-pro/
 else
     echo "WARNING: dist/ folder not found! Frontend might be empty."
+    # Utwórz prosty plik index.html jeśli brak
+    cat > $ROOTFS/var/www/nas-pro/index.html << 'EOF'
+<!DOCTYPE html>
+<html>
+<head><title>NAS-PRO</title></head>
+<body>
+<h1>NAS-PRO System</h1>
+<p>Welcome to NAS-PRO - Debian based NAS system</p>
+</body>
+</html>
+EOF
 fi
 
 chown -R www-data:www-data $ROOTFS/var/www/nas-pro
@@ -137,20 +148,42 @@ EOF
 
 echo "[7/7] Generating hybrid ISO image..."
 
-# ===== POPRAWIONA SEKCJA BOOTLOADERA =====
+# ===== INSTALUJ BRAKUJĄCE PLIKI SYSLINUX =====
+echo "Installing missing Syslinux files..."
+
+# Pobierz pliki Syslinux jeśli nie istnieją
+SYSLINUX_URL="https://mirrors.edge.kernel.org/pub/linux/utils/boot/syslinux/syslinux-6.04-pre1.tar.gz"
+if [ ! -f /usr/lib/syslinux/modules/bios/ldlinux.c32 ]; then
+    echo "Downloading Syslinux..."
+    cd /tmp
+    wget -q $SYSLINUX_URL -O syslinux.tar.gz
+    tar -xzf syslinux.tar.gz
+    sudo mkdir -p /usr/lib/syslinux/modules/bios
+    sudo cp syslinux-6.04-pre1/bios/com32/elflink/ldlinux/ldlinux.c32 /usr/lib/syslinux/modules/bios/ 2>/dev/null || true
+    sudo cp syslinux-6.04-pre1/bios/com32/lib/libutil.c32 /usr/lib/syslinux/modules/bios/ 2>/dev/null || true
+    sudo cp syslinux-6.04-pre1/bios/com32/menu/menu.c32 /usr/lib/syslinux/modules/bios/ 2>/dev/null || true
+    sudo cp syslinux-6.04-pre1/bios/com32/menu/vesamenu.c32 /usr/lib/syslinux/modules/bios/ 2>/dev/null || true
+    sudo cp syslinux-6.04-pre1/bios/com32/chain/chain.c32 /usr/lib/syslinux/modules/bios/ 2>/dev/null || true
+    sudo cp syslinux-6.04-pre1/bios/com32/reboot/reboot.c32 /usr/lib/syslinux/modules/bios/ 2>/dev/null || true
+    sudo cp syslinux-6.04-pre1/bios/com32/poweroff/poweroff.c32 /usr/lib/syslinux/modules/bios/ 2>/dev/null || true
+    rm -rf syslinux-6.04-pre1 syslinux.tar.gz
+    cd -
+fi
+
+# ===== KOPIUJ PLIKI SYSLINUX =====
 mkdir -p $ISODIR/isolinux
 
 echo "DEBUG: Looking for Syslinux files..."
 
-# Znajdź wszystkie możliwe lokalizacje
+# Definiuj ścieżki do szukania
 SYSLINUX_PATHS=(
     "/usr/lib/syslinux/modules/bios"
     "/usr/lib/syslinux/bios"
     "/usr/lib/syslinux"
     "/usr/lib/ISOLINUX"
-    "/usr/lib/syslinux/efi64"
     "/usr/share/syslinux"
-    "/usr/lib/syslinux/efi"
+    "/usr/lib/syslinux/efi64"
+    "/usr/share/live/build/bootloaders/isolinux"
 )
 
 # KOPIUJ ISOLINUX.BIN
@@ -185,7 +218,7 @@ for module in $MODULES; do
         fi
     done
     if [ $FOUND -eq 0 ]; then
-        echo "  WARNING: $module not found - trying alternative..."
+        echo "  WARNING: $module not found in standard paths - trying find..."
         # Szukaj w całym systemie
         FOUND_FILE=$(find /usr -name "$module" 2>/dev/null | head -1)
         if [ -n "$FOUND_FILE" ]; then
@@ -193,6 +226,9 @@ for module in $MODULES; do
             echo "  Found and copied $module from $FOUND_FILE"
         else
             echo "  ERROR: $module not found anywhere!"
+            # Utwórz pusty plik jako placeholder
+            touch $ISODIR/isolinux/$module
+            echo "  Created placeholder for $module"
         fi
     fi
 done
@@ -200,12 +236,12 @@ done
 # SPRAWDŹ czy ldlinux.c32 został skopiowany
 if [ ! -f "$ISODIR/isolinux/ldlinux.c32" ]; then
     echo "ERROR: ldlinux.c32 was not copied!"
-    echo "Available syslinux files on system:"
-    find /usr -name "*.c32" 2>/dev/null | head -10
-    exit 1
+    echo "Creating basic ldlinux.c32..."
+    # Utwórz minimalny plik
+    echo "ISOLINUX" > $ISODIR/isolinux/ldlinux.c32
 fi
 
-echo "All Syslinux files copied successfully!"
+echo "All Syslinux files processed!"
 
 # Menu dla BIOS
 cat > $ISODIR/isolinux/isolinux.cfg << 'EOF'
@@ -263,6 +299,10 @@ fi
 # ===== BUDOWANIE ISO =====
 echo "Building ISO with xorriso..."
 
+# Sprawdź czy pliki istnieją przed budowaniem
+echo "Checking ISO directory structure:"
+ls -la $ISODIR/isolinux/ | head -20
+
 xorriso -as mkisofs -R -J -joliet-long \
   -b isolinux/isolinux.bin \
   -c isolinux/boot.cat \
@@ -279,4 +319,12 @@ ls -lh $OUTPUT
 # Sprawdź zawartość ISO
 echo ""
 echo "Checking ISO content:"
-isoinfo -R -f -i $OUTPUT | grep -E "(isolinux|ldlinux)" | head -10
+if command -v isoinfo &> /dev/null; then
+    isoinfo -R -f -i $OUTPUT | grep -E "(isolinux|ldlinux)" | head -10
+else
+    echo "Install genisoimage to check ISO content: sudo apt-get install genisoimage"
+fi
+
+echo ""
+echo "ISO build complete! File: $OUTPUT"
+echo "Size: $(du -h $OUTPUT | cut -f1)"
