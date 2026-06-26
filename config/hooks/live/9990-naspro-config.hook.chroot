@@ -1,114 +1,102 @@
 #!/bin/bash
 set -e
 
-# =============================================================================
-# NAS Pro Debian - Config Hook (runs during ISO build)
-# Sets up nginx, systemd services, ssh, users
-# =============================================================================
+echo "=== NAS-PRO UI CONFIG HOOK ==="
 
-# --- Install nginx and configure to serve UGOS Pro frontend -----------------
-mkdir -p /var/www/naspro
-if [ -d /usr/share/naspro/dist ]; then
-    cp -r /usr/share/naspro/dist/* /var/www/naspro/
+# ----------------------------
+# WEB UI FOLDER
+# ----------------------------
+mkdir -p /var/www/nas-pro
+
+# jeśli React build istnieje
+if [ -d /usr/share/naspro ]; then
+    cp -r /usr/share/naspro/* /var/www/nas-pro/
 fi
 
-chown -R www-data:www-data /var/www/naspro
-chmod -R 755 /var/www/naspro
+# fallback UI (UGREEN STYLE SIMPLE DASHBOARD)
+cat > /var/www/nas-pro/index.html << 'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+  <title>NAS-PRO UI</title>
+  <style>
+    body {
+      margin:0;
+      font-family:Arial;
+      background:#0b1220;
+      color:white;
+    }
 
-cat > /etc/nginx/sites-available/default << 'NGINX'
+    .topbar {
+      height:60px;
+      background:#111827;
+      display:flex;
+      align-items:center;
+      padding:0 20px;
+      font-weight:bold;
+    }
+
+    .grid {
+      display:grid;
+      grid-template-columns:repeat(4,1fr);
+      gap:15px;
+      padding:20px;
+    }
+
+    .card {
+      background:#1f2937;
+      padding:20px;
+      border-radius:12px;
+      text-align:center;
+      cursor:pointer;
+    }
+
+    .card:hover {
+      background:#374151;
+    }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  NAS-PRO Control Center
+</div>
+
+<div class="grid">
+  <div class="card">📁 Files</div>
+  <div class="card">💾 Storage</div>
+  <div class="card">👤 Users</div>
+  <div class="card">⚙️ Settings</div>
+  <div class="card">🌐 Network</div>
+  <div class="card">🐳 Docker</div>
+  <div class="card">📊 Monitoring</div>
+  <div class="card">🔐 Security</div>
+</div>
+
+</body>
+</html>
+EOF
+
+# ----------------------------
+# NGINX CONFIG (UI + API)
+# ----------------------------
+cat > /etc/nginx/sites-available/default << 'EOF'
 server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
-    root /var/www/naspro;
+    listen 80;
+    root /var/www/nas-pro;
     index index.html;
-    server_name _;
+
     location / {
         try_files $uri $uri/ /index.html;
     }
+
     location /api {
         proxy_pass http://localhost:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
     }
 }
-NGINX
+EOF
 
-# Enable nginx
-systemctl enable nginx
+systemctl enable nginx || true
 
-# --- Create systemd service for UGOS Pro backend ----------------------------
-useradd -r -s /bin/false -d /var/lib/naspro -M naspro || true
-
-mkdir -p /opt/naspro
-cat > /opt/naspro/start.sh << 'START'
-#!/bin/bash
-set -e
-cd /opt/naspro
-# UGOS Pro backend - replace with actual server.js path
-if [ -f /opt/naspro/server.js ]; then
-    exec node /opt/naspro/server.js
-else
-    # Fallback: just keep service alive
-    echo "No backend server.js found, waiting..."
-    sleep infinity
-fi
-START
-chmod +x /opt/naspro/start.sh
-
-cat > /etc/systemd/system/naspro.service << 'SERVICE'
-[Unit]
-Description=UGOS Pro Backend
-After=network.target
-
-[Service]
-Type=simple
-User=naspro
-WorkingDirectory=/opt/naspro
-ExecStart=/opt/naspro/start.sh
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-SERVICE
-
-systemctl enable naspro
-
-# --- SSH configuration --------------------------------------------------------
-sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
-sed -i 's/#PermitRootLogin yes/PermitRootLogin yes/' /etc/ssh/sshd_config
-systemctl enable ssh
-
-# Set root password for live environment
-echo 'root:naspro' | chpasswd
-
-# Create default user with sudo access
-useradd -m -s /bin/bash -G sudo,www-data naspro || true
-echo 'naspro:naspro' | chpasswd
-
-# --- Network configuration ---------------------------------------------------
-cat > /etc/systemd/network/20-wired.network << 'NETWORK'
-[Match]
-Name=en*
-Name=eth*
-
-[Network]
-DHCP=yes
-NETWORK
-
-systemctl enable systemd-networkd
-systemctl enable systemd-resolved
-
-# --- Enable getty on console for serial/headless access ---------------------
-systemctl enable getty@tty1
-systemctl enable serial-getty@ttyS0 2>/dev/null || true
-
-# --- Ensure grub is configured ---------------------------------------------
-mkdir -p /boot/grub
-update-grub 2>/dev/null || true
+echo "UI CONFIG DONE"

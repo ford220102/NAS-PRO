@@ -1,191 +1,78 @@
 #!/bin/bash
 set -e
 
-# =============================================================================
-# NAS Pro Debian - Install disk installer script
-# This hook runs during ISO build to install the installer script
-# =============================================================================
+echo "=== NAS-PRO HOOK: base system setup ==="
 
-# --- Install disk installer script into /usr/local/bin ------------------------
-cat > /usr/local/bin/naspro-installer << 'INSTALLER'
-#!/bin/bash
-set -euo pipefail
+# ----------------------------
+# USERS
+# ----------------------------
+useradd -m -s /bin/bash naspro || true
+echo "naspro:naspro" | chpasswd
+usermod -aG sudo naspro
 
-# =============================================================================
-# NAS Pro Full System Installer
-# Installs Debian with NAS Pro on a target disk
-# =============================================================================
+# root password (DEV MODE)
+echo "root:naspro" | chpasswd
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+# ----------------------------
+# PACKAGES (SAFE ENABLE SERVICES)
+# ----------------------------
+systemctl enable ssh || true
+systemctl enable nginx || true
+systemctl enable systemd-networkd || true
+systemctl enable systemd-resolved || true
 
-log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+# ----------------------------
+# BASIC DIRECTORIES
+# ----------------------------
+mkdir -p /opt/naspro
+mkdir -p /var/lib/naspro
+mkdir -p /var/log/naspro
 
-usage() {
-    echo "Usage: $0 <target_disk>"
-    echo "Example: $0 /dev/sda"
-    echo ""
-    echo "WARNING: This will ERASE ALL DATA on the target disk!"
-    exit 1
-}
+# ----------------------------
+# BACKEND PLACEHOLDER (UI API READY)
+# ----------------------------
+cat > /opt/naspro/server.js << 'EOF'
+const http = require("http");
 
-if [ $# -ne 1 ]; then
-    usage
-fi
+const server = http.createServer((req, res) => {
+  if (req.url === "/api/status") {
+    res.writeHead(200, {"Content-Type":"application/json"});
+    res.end(JSON.stringify({
+      system: "NAS-PRO",
+      status: "online"
+    }));
+    return;
+  }
 
-TARGET_DISK="$1"
+  res.writeHead(200, {"Content-Type":"text/plain"});
+  res.end("NAS-PRO API running");
+});
 
-if [ ! -b "${TARGET_DISK}" ]; then
-    log_error "${TARGET_DISK} is not a valid block device"
-    exit 1
-fi
+server.listen(3000, () => {
+  console.log("NAS-PRO API on :3000");
+});
+EOF
 
-if [[ "${TARGET_DISK}" =~ ^/dev/loop ]]; then
-    log_error "Cannot install on loop device"
-    exit 1
-fi
+chown -R naspro:naspro /opt/naspro
+chmod +x /opt/naspro/server.js
 
-echo ""
-log_warn "WARNING: This will DESTROY ALL DATA on ${TARGET_DISK}"
-read -p "Are you sure? Type 'yes' to continue: " confirm
-if [ "$confirm" != "yes" ]; then
-    log_info "Installation cancelled"
-    exit 0
-fi
+# ----------------------------
+# SYSTEMD BACKEND SERVICE
+# ----------------------------
+cat > /etc/systemd/system/naspro-api.service << 'EOF'
+[Unit]
+Description=NAS-PRO API
+After=network.target
 
-# Unmount any existing partitions
-log_info "Unmounting existing partitions..."
-umount "${TARGET_DISK}"* 2>/dev/null || true
-swapoff "${TARGET_DISK}"* 2>/dev/null || true
+[Service]
+ExecStart=/usr/bin/node /opt/naspro/server.js
+Restart=always
+User=naspro
 
-# Create partition table
-log_info "Creating partition table on ${TARGET_DISK}..."
-parted -s "${TARGET_DISK}" mklabel gpt
+[Install]
+WantedBy=multi-user.target
+EOF
 
-# Create EFI partition (512MB)
-log_info "Creating EFI partition..."
-parted -s "${TARGET_DISK}" mkpart primary fat32 1MiB 513MiB
-parted -s "${TARGET_DISK}" set 1 esp on
-parted -s "${TARGET_DISK}" set 1 boot on
-mkfs.vfat -F32 "${TARGET_DISK}1"
+systemctl enable naspro-api || true
 
-# Create root partition (rest of disk)
-log_info "Creating root partition..."
-parted -s "${TARGET_DISK}" mkpart primary ext4 513MiB 100%
-mkfs.ext4 -F "${TARGET_DISK}2"
-
-# Mount partitions
-log_info "Mounting partitions..."
-mkdir -p /mnt/naspro
-# Get the full partition paths
-EFI_PART="${TARGET_DISK}1"
-ROOT_PART="${TARGET_DISK}2"
-
-# If partitions are named differently (e.g., nvme0n1p1)
-if [ ! -b "${EFI_PART}" ]; then
-    EFI_PART="${TARGET_DISK}p1"
-    ROOT_PART="${TARGET_DISK}p2"
-fi
-
-mount "${ROOT_PART}" /mnt/naspro
-mkdir -p /mnt/naspro/boot/efi
-mount "${EFI_PART}" /mnt/naspro/boot/efi
-
-# Copy live system to disk
-log_info "Copying system files to disk..."
-rsync -aHAX --exclude=/proc --exclude=/sys --exclude=/dev --exclude=/tmp --exclude=/run --exclude=/mnt --exclude=/media --exclude=/lost+found / /mnt/naspro/
-
-# Create mount points
-mkdir -p /mnt/naspro/proc /mnt/naspro/sys /mnt/naspro/dev /mnt/naspro/tmp /mnt/naspro/run /mnt/naspro/mnt /mnt/naspro/media
-chmod 1777 /mnt/naspro/tmp
-
-# Configure fstab
-log_info "Configuring fstab..."
-ROOT_UUID=$(blkid -s UUID -o value "${ROOT_PART}")
-EFI_UUID=$(blkid -s UUID -o value "${EFI_PART}")
-
-cat > /mnt/naspro/etc/fstab << FSTAB
-# /etc/fstab
-UUID=${ROOT_UUID} / ext4 errors=remount-ro 0 1
-UUID=${EFI_UUID} /boot/efi vfat umask=0077 0 1
-tmpfs /tmp tmpfs defaults,nosuid,nodev 0 0
-FSTAB
-
-# Install GRUB bootloader
-log_info "Installing GRUB bootloader..."
-mount --bind /dev /mnt/naspro/dev
-mount --bind /proc /mnt/naspro/proc
-mount --bind /sys /mnt/naspro/sys
-mount --bind /run /mnt/naspro/run
-
-chroot /mnt/naspro grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --removable
-chroot /mnt/naspro grub-install --target=i386-pc "${TARGET_DISK}"
-chroot /mnt/naspro update-grub
-
-# Update initramfs
-log_info "Updating initramfs..."
-chroot /mnt/naspro update-initramfs -u -k all
-
-# Configure network for installed system
-log_info "Configuring network..."
-cat > /mnt/naspro/etc/systemd/network/20-wired.network << 'NETCONF'
-[Match]
-Name=en*
-Name=eth*
-
-[Network]
-DHCP=yes
-NETCONF
-
-# Enable services in installed system
-chroot /mnt/naspro systemctl enable ssh
-chroot /mnt/naspro systemctl enable nginx
-chroot /mnt/naspro systemctl enable naspro
-chroot /mnt/naspro systemctl enable systemd-networkd
-chroot /mnt/naspro systemctl enable systemd-resolved
-
-# Set installed system passwords
-chroot /mnt/naspro /bin/bash -c "echo 'root:naspro' | chpasswd"
-chroot /mnt/naspro useradd -m -s /bin/bash -G sudo,www-data naspro 2>/dev/null || true
-chroot /mnt/naspro /bin/bash -c "echo 'naspro:naspro' | chpasswd"
-
-# Unmount
-log_info "Cleaning up..."
-umount /mnt/naspro/run 2>/dev/null || true
-umount /mnt/naspro/sys 2>/dev/null || true
-umount /mnt/naspro/proc 2>/dev/null || true
-umount /mnt/naspro/dev 2>/dev/null || true
-umount /mnt/naspro/boot/efi
-umount /mnt/naspro
-
-rmdir /mnt/naspro 2>/dev/null || true
-
-log_info "Installation complete!"
-log_info "You can now reboot and remove the installation media."
-log_info "Access the NAS Pro web interface at: http://<server-ip>/"
-INSTALLER
-chmod +x /usr/local/bin/naspro-installer
-
-# --- Create desktop shortcut for installer ----------------------------------
-mkdir -p /home/naspro/Desktop
-cat > /home/naspro/Desktop/install-naspro.sh << 'DESKTOP'
-#!/bin/bash
-# NAS Pro Installer
-# Run: sudo /usr/local/bin/naspro-installer /dev/sdX
-
-echo "Available disks:"
-lsblk -d -o NAME,SIZE,MODEL,TYPE | grep disk
-echo ""
-echo "To install NAS Pro on a disk, run:"
-echo "  sudo /usr/local/bin/naspro-installer /dev/sdX"
-echo ""
-echo "WARNING: This will erase all data on the selected disk!"
-read -p "Press Enter to open the installer..."
-sudo /usr/local/bin/naspro-installer
-DESKTOP
-chmod +x /home/naspro/Desktop/install-naspro.sh
-chown -R naspro:naspro /home/naspro/Desktop
+echo "HOOK 9990 done"

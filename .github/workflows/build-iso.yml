@@ -1,4 +1,4 @@
-name: Build NAS-PRO ISO
+name: NAS-PRO Stable ISO
 
 on:
   push:
@@ -11,10 +11,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y debootstrap squashfs-tools xorriso grub-pc-bin grub-efi-amd64-bin mtools
+          sudo apt-get install -y \
+            debootstrap \
+            squashfs-tools \
+            xorriso \
+            grub-pc-bin \
+            grub-efi-amd64-bin \
+            mtools \
+            linux-image-amd64 \
+            initramfs-tools
 
       - name: Build ISO
         run: chmod +x build-iso.sh && sudo ./build-iso.sh

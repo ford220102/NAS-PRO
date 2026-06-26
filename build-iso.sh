@@ -1,163 +1,145 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/bash
+set -e
 
-# =============================================================================
-# Build Debian Live ISO for NAS Pro
-# Requires: live-build, debootstrap, squashfs-tools, xorriso,
-#           isolinux, syslinux-efi, grub-pc-bin, grub-efi-amd64-bin, mtools
-# =============================================================================
+echo "=== NAS-PRO STABLE v2 DESKTOP OS ==="
 
-DIST="bookworm"
-ARCH="amd64"
-LB_DIR="live-build"
-ISO_NAME="naspro-debian-${DIST}-${ARCH}.iso"
+WORKDIR=/tmp/nas-pro
+ROOTFS=$WORKDIR/rootfs
+ISO=$WORKDIR/iso
+OUTPUT=nas-pro.iso
 
-# --- Clean previous build ---------------------------------------------------
-if [ -d "${LB_DIR}" ]; then
-    rm -rf "${LB_DIR}"
-fi
-mkdir -p "${LB_DIR}"
-cd "${LB_DIR}"
+rm -rf $WORKDIR
+mkdir -p $ROOTFS $ISO/boot/grub $ISO/live
 
-# --- Configure live-build ----------------------------------------------------
-lb config \
-    --distribution "${DIST}" \
-    --architecture "${ARCH}" \
-    --binary-images iso-hybrid \
-    --binary-filesystem fat32 \
-    --debian-installer false \
-    --debian-installer-gui false \
-    --archive-areas "main contrib non-free non-free-firmware" \
-    --parent-archive-areas "main contrib non-free non-free-firmware" \
-    --apt-indices false \
-    --memtest none \
-    --win32-loader false \
-    --bootloader syslinux,grub-efi \
-    --updates true \
-    --security true \
-    --backports false \
-    --firmware-chroot true \
-    --firmware-binary true \
-    --initsystem systemd
+# -----------------------------
+# BASE SYSTEM
+# -----------------------------
+debootstrap --arch=amd64 bookworm $ROOTFS http://deb.debian.org/debian
 
-# --- Package list ------------------------------------------------------------
-mkdir -p config/package-lists
-
-cat > config/package-lists/naspro.list.chroot << 'EOF'
-# Kernel and boot
-linux-image-amd64
-linux-headers-amd64
-initramfs-tools
-
-# Live system
-live-boot
-live-config-systemd
-
-# Bootloader (needed for install-to-disk)
-grub-common
-grub-pc-bin
-grub-efi-amd64-bin
-grub-efi-amd64-signed
-shim-signed
-syslinux-common
-syslinux-efi
-isolinux
-mtools
-
-# Firmware — critical for hardware boot
-firmware-linux
-firmware-linux-nonfree
-firmware-misc-nonfree
-firmware-realtek
-firmware-atheros
-firmware-brcm80211
-firmware-iwlwifi
-firmware-libertas
-firmware-qlogic
-firmware-bnx2
-firmware-bnx2x
-
-# Base system
-systemd
-systemd-sysv
-udev
-dbus
-policykit-1
-sudo
-passwd
-console-setup
-console-data
-kbd
-
-# Network
-net-tools
-iproute2
-iputils-ping
-network-manager
-openssh-server
-ethtool
-
-# Filesystem / partitioning tools
-parted
-gdisk
-e2fsprogs
-dosfstools
-ntfs-3g
-lvm2
-mdadm
-
-# Disk tools
-smartmontools
-hdparm
-nvme-cli
-
-# Web server
-nginx
-
-# Node.js
-nodejs
-npm
-
-# System utilities
-vim
-nano
-curl
-wget
-rsync
-htop
-tmux
-
-# NAS services
-samba
-nfs-common
-netatalk
-avahi-daemon
-zfsutils-linux
+cat > $ROOTFS/etc/apt/sources.list <<EOF
+deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware
+deb http://security.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware
 EOF
 
-# --- Copy hooks from project into live-build config -------------------------
-if [ -d "../config/hooks/live" ]; then
-    mkdir -p config/hooks/live
-    cp -r ../config/hooks/live/* config/hooks/live/
-    chmod +x config/hooks/live/*.hook.chroot 2>/dev/null || true
-fi
+chroot $ROOTFS apt-get update
 
-# --- Include frontend dist in rootfs -----------------------------------------
-mkdir -p config/includes.chroot/usr/share/naspro
-if [ -d "../dist" ]; then
-    cp -r ../dist config/includes.chroot/usr/share/naspro/
-fi
+chroot $ROOTFS apt-get install -y \
+  systemd systemd-sysv dbus sudo \
+  linux-image-amd64 initramfs-tools \
+  nginx openssh-server curl wget git \
+  xorg openbox lightdm \
+  chromium \
+  network-manager \
+  live-boot live-config
 
-# --- Build the ISO -----------------------------------------------------------
-lb build
+# -----------------------------
+# USERS
+# -----------------------------
+echo "nas-pro" > $ROOTFS/etc/hostname
+echo "root:naspro" | chroot $ROOTFS chpasswd
 
-# --- Move result to project root ---------------------------------------------
-cd ..
-if [ -f "${LB_DIR}/live-image-${ARCH}.hybrid.iso" ]; then
-    mv "${LB_DIR}/live-image-${ARCH}.hybrid.iso" "${ISO_NAME}"
-    echo "Build complete: ${ISO_NAME}"
-    echo "Size: $(du -h "${ISO_NAME}" | cut -f1)"
+chroot $ROOTFS useradd -m -s /bin/bash naspro || true
+echo "naspro:naspro" | chroot $ROOTFS chpasswd
+chroot $ROOTFS usermod -aG sudo naspro
+
+# -----------------------------
+# UI (React/Vite DESKTOP MODE)
+# -----------------------------
+mkdir -p $ROOTFS/var/www/nas-pro
+
+if [ -d "dist" ]; then
+    cp -r dist/* $ROOTFS/var/www/nas-pro/
 else
-    echo "Error: ISO build failed — no .iso file found."
-    exit 1
+    cat > $ROOTFS/var/www/nas-pro/index.html <<EOF
+<!DOCTYPE html>
+<html>
+<head>
+  <title>NAS-PRO Desktop</title>
+  <style>
+    body { margin:0; font-family:sans-serif; background:#0f172a; color:white; }
+    .bar { height:50px; background:#111827; display:flex; align-items:center; padding:10px; }
+    .grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; padding:20px; }
+    .card { background:#1f2937; padding:20px; border-radius:10px; text-align:center; }
+  </style>
+</head>
+<body>
+  <div class="bar">NAS-PRO Desktop OS</div>
+  <div class="grid">
+    <div class="card">📁 Files</div>
+    <div class="card">🌐 Browser</div>
+    <div class="card">⚙️ Settings</div>
+    <div class="card">💾 Storage</div>
+  </div>
+</body>
+</html>
+EOF
 fi
+
+chown -R www-data:www-data $ROOTFS/var/www/nas-pro
+
+# -----------------------------
+# NGINX UI SERVER
+# -----------------------------
+cat > $ROOTFS/etc/nginx/sites-available/default <<EOF
+server {
+    listen 80;
+    root /var/www/nas-pro;
+    index index.html;
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+
+    location /api {
+        proxy_pass http://localhost:3000;
+    }
+}
+EOF
+
+# -----------------------------
+# ENABLE SERVICES
+# -----------------------------
+chroot $ROOTFS systemctl enable nginx
+chroot $ROOTFS systemctl enable ssh
+
+# -----------------------------
+# INITRAMFS + KERNEL FIX
+# -----------------------------
+chroot $ROOTFS update-initramfs -u -k all
+
+VMLINUX=$(ls $ROOTFS/boot/vmlinuz-* | head -n1)
+INITRD=$(ls $ROOTFS/boot/initrd.img-* | head -n1)
+
+cp "$VMLINUX" $ISO/boot/vmlinuz
+cp "$INITRD" $ISO/boot/initrd.img
+
+# -----------------------------
+# SQUASHFS
+# -----------------------------
+mksquashfs $ROOTFS $ISO/live/filesystem.squashfs -e boot
+
+# -----------------------------
+# GRUB UI BOOT
+# -----------------------------
+cat > $ISO/boot/grub/grub.cfg <<EOF
+set timeout=3
+set default=0
+
+menuentry "NAS-PRO Desktop UI" {
+    linux /boot/vmlinuz boot=live quiet splash
+    initrd /boot/initrd.img
+}
+
+menuentry "NAS-PRO Debug Mode" {
+    linux /boot/vmlinuz boot=live debug
+    initrd /boot/initrd.img
+}
+EOF
+
+# -----------------------------
+# BUILD ISO
+# -----------------------------
+grub-mkrescue -o $OUTPUT $ISO
+
+echo "=== BUILD DONE ==="
+ls -lh $OUTPUT
