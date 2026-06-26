@@ -1,95 +1,191 @@
 #!/bin/bash
 set -e
 
-# Configure nginx to serve the built frontend
-mkdir -p /var/www/nas-pro
-cp -r /usr/share/nas-pro/dist/* /var/www/nas-pro/
+# =============================================================================
+# NAS Pro Debian - Install disk installer script
+# This hook runs during ISO build to install the installer script
+# =============================================================================
 
-chown -R www-data:www-data /var/www/nas-pro
-chmod -R 755 /var/www/nas-pro
-
-# Configure nginx default site
-cat > /etc/nginx/sites-available/default << 'NGINX'
-server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
-    root /var/www/nas-pro;
-    index index.html;
-    server_name _;
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-    location /api {
-        proxy_pass http://localhost:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
-    }
-}
-NGINX
-
-# Enable nginx
-systemctl enable nginx
-
-# Create nas-pro service user
-useradd -r -s /bin/false -d /var/lib/nas-pro -M nas-pro || true
-
-# Set up NAS Pro backend service
-mkdir -p /opt/nas-pro
-cat > /opt/nas-pro/start.sh << 'START'
+# --- Install disk installer script into /usr/local/bin ------------------------
+cat > /usr/local/bin/naspro-installer << 'INSTALLER'
 #!/bin/bash
-cd /opt/nas-pro
-# Backend start command would go here
-# For now, we'll just serve the static frontend
-START
-chmod +x /opt/nas-pro/start.sh
+set -euo pipefail
 
-# Create systemd service for NAS Pro backend
-cat > /etc/systemd/system/nas-pro.service << 'SERVICE'
-[Unit]
-Description=NAS Pro Backend Service
-After=network.target
+# =============================================================================
+# NAS Pro Full System Installer
+# Installs Debian with NAS Pro on a target disk
+# =============================================================================
 
-[Service]
-Type=simple
-User=nas-pro
-WorkingDirectory=/opt/nas-pro
-ExecStart=/opt/nas-pro/start.sh
-Restart=on-failure
-RestartSec=5
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 
-[Install]
-WantedBy=multi-user.target
-SERVICE
+log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-systemctl enable nas-pro
+usage() {
+    echo "Usage: $0 <target_disk>"
+    echo "Example: $0 /dev/sda"
+    echo ""
+    echo "WARNING: This will ERASE ALL DATA on the target disk!"
+    exit 1
+}
 
-# Configure SSH for root access with password (for live environment)
-sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
-systemctl enable ssh
+if [ $# -ne 1 ]; then
+    usage
+fi
 
-# Set root password for live environment
-echo 'root:naspro' | chpasswd
+TARGET_DISK="$1"
 
-# Create default user
-useradd -m -s /bin/bash -G sudo,www-data naspro || true
-echo 'naspro:naspro' | chpasswd
+if [ ! -b "${TARGET_DISK}" ]; then
+    log_error "${TARGET_DISK} is not a valid block device"
+    exit 1
+fi
 
-# Configure network
-mkdir -p /etc/systemd/network
-cat > /etc/systemd/network/20-wired.network << 'NETWORK'
+if [[ "${TARGET_DISK}" =~ ^/dev/loop ]]; then
+    log_error "Cannot install on loop device"
+    exit 1
+fi
+
+echo ""
+log_warn "WARNING: This will DESTROY ALL DATA on ${TARGET_DISK}"
+read -p "Are you sure? Type 'yes' to continue: " confirm
+if [ "$confirm" != "yes" ]; then
+    log_info "Installation cancelled"
+    exit 0
+fi
+
+# Unmount any existing partitions
+log_info "Unmounting existing partitions..."
+umount "${TARGET_DISK}"* 2>/dev/null || true
+swapoff "${TARGET_DISK}"* 2>/dev/null || true
+
+# Create partition table
+log_info "Creating partition table on ${TARGET_DISK}..."
+parted -s "${TARGET_DISK}" mklabel gpt
+
+# Create EFI partition (512MB)
+log_info "Creating EFI partition..."
+parted -s "${TARGET_DISK}" mkpart primary fat32 1MiB 513MiB
+parted -s "${TARGET_DISK}" set 1 esp on
+parted -s "${TARGET_DISK}" set 1 boot on
+mkfs.vfat -F32 "${TARGET_DISK}1"
+
+# Create root partition (rest of disk)
+log_info "Creating root partition..."
+parted -s "${TARGET_DISK}" mkpart primary ext4 513MiB 100%
+mkfs.ext4 -F "${TARGET_DISK}2"
+
+# Mount partitions
+log_info "Mounting partitions..."
+mkdir -p /mnt/naspro
+# Get the full partition paths
+EFI_PART="${TARGET_DISK}1"
+ROOT_PART="${TARGET_DISK}2"
+
+# If partitions are named differently (e.g., nvme0n1p1)
+if [ ! -b "${EFI_PART}" ]; then
+    EFI_PART="${TARGET_DISK}p1"
+    ROOT_PART="${TARGET_DISK}p2"
+fi
+
+mount "${ROOT_PART}" /mnt/naspro
+mkdir -p /mnt/naspro/boot/efi
+mount "${EFI_PART}" /mnt/naspro/boot/efi
+
+# Copy live system to disk
+log_info "Copying system files to disk..."
+rsync -aHAX --exclude=/proc --exclude=/sys --exclude=/dev --exclude=/tmp --exclude=/run --exclude=/mnt --exclude=/media --exclude=/lost+found / /mnt/naspro/
+
+# Create mount points
+mkdir -p /mnt/naspro/proc /mnt/naspro/sys /mnt/naspro/dev /mnt/naspro/tmp /mnt/naspro/run /mnt/naspro/mnt /mnt/naspro/media
+chmod 1777 /mnt/naspro/tmp
+
+# Configure fstab
+log_info "Configuring fstab..."
+ROOT_UUID=$(blkid -s UUID -o value "${ROOT_PART}")
+EFI_UUID=$(blkid -s UUID -o value "${EFI_PART}")
+
+cat > /mnt/naspro/etc/fstab << FSTAB
+# /etc/fstab
+UUID=${ROOT_UUID} / ext4 errors=remount-ro 0 1
+UUID=${EFI_UUID} /boot/efi vfat umask=0077 0 1
+tmpfs /tmp tmpfs defaults,nosuid,nodev 0 0
+FSTAB
+
+# Install GRUB bootloader
+log_info "Installing GRUB bootloader..."
+mount --bind /dev /mnt/naspro/dev
+mount --bind /proc /mnt/naspro/proc
+mount --bind /sys /mnt/naspro/sys
+mount --bind /run /mnt/naspro/run
+
+chroot /mnt/naspro grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --removable
+chroot /mnt/naspro grub-install --target=i386-pc "${TARGET_DISK}"
+chroot /mnt/naspro update-grub
+
+# Update initramfs
+log_info "Updating initramfs..."
+chroot /mnt/naspro update-initramfs -u -k all
+
+# Configure network for installed system
+log_info "Configuring network..."
+cat > /mnt/naspro/etc/systemd/network/20-wired.network << 'NETCONF'
 [Match]
 Name=en*
 Name=eth*
 
 [Network]
 DHCP=yes
-NETWORK
+NETCONF
 
-systemctl enable systemd-networkd
-systemctl enable systemd-resolved
+# Enable services in installed system
+chroot /mnt/naspro systemctl enable ssh
+chroot /mnt/naspro systemctl enable nginx
+chroot /mnt/naspro systemctl enable naspro
+chroot /mnt/naspro systemctl enable systemd-networkd
+chroot /mnt/naspro systemctl enable systemd-resolved
+
+# Set installed system passwords
+chroot /mnt/naspro /bin/bash -c "echo 'root:naspro' | chpasswd"
+chroot /mnt/naspro useradd -m -s /bin/bash -G sudo,www-data naspro 2>/dev/null || true
+chroot /mnt/naspro /bin/bash -c "echo 'naspro:naspro' | chpasswd"
+
+# Unmount
+log_info "Cleaning up..."
+umount /mnt/naspro/run 2>/dev/null || true
+umount /mnt/naspro/sys 2>/dev/null || true
+umount /mnt/naspro/proc 2>/dev/null || true
+umount /mnt/naspro/dev 2>/dev/null || true
+umount /mnt/naspro/boot/efi
+umount /mnt/naspro
+
+rmdir /mnt/naspro 2>/dev/null || true
+
+log_info "Installation complete!"
+log_info "You can now reboot and remove the installation media."
+log_info "Access the NAS Pro web interface at: http://<server-ip>/"
+INSTALLER
+chmod +x /usr/local/bin/naspro-installer
+
+# --- Create desktop shortcut for installer ----------------------------------
+mkdir -p /home/naspro/Desktop
+cat > /home/naspro/Desktop/install-naspro.sh << 'DESKTOP'
+#!/bin/bash
+# NAS Pro Installer
+# Run: sudo /usr/local/bin/naspro-installer /dev/sdX
+
+echo "Available disks:"
+lsblk -d -o NAME,SIZE,MODEL,TYPE | grep disk
+echo ""
+echo "To install NAS Pro on a disk, run:"
+echo "  sudo /usr/local/bin/naspro-installer /dev/sdX"
+echo ""
+echo "WARNING: This will erase all data on the selected disk!"
+read -p "Press Enter to open the installer..."
+sudo /usr/local/bin/naspro-installer
+DESKTOP
+chmod +x /home/naspro/Desktop/install-naspro.sh
+chown -R naspro:naspro /home/naspro/Desktop
