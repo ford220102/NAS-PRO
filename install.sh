@@ -60,7 +60,18 @@ EOF
 
 mkdir -p /srv/nas/public /srv/nas/data
 chmod 777 /srv/nas/public
+chmod 770 /srv/nas/data
+
+# Tworzenie grupy i dodanie domyślnego użytkownika, by miał dostęp do [Data]
 groupadd -f nasusers
+if id "naspro" &>/dev/null; then
+    usermod -aG nasusers naspro
+    # Ustawienie hasła samby dla użytkownika (naspro) tak jak hasło systemowe
+    (echo "naspro"; echo "naspro") | smbpasswd -a -s naspro
+fi
+
+chown -R root:nasusers /srv/nas/data
+
 systemctl enable smbd nmbd
 systemctl start smbd nmbd
 
@@ -72,6 +83,7 @@ systemctl enable nfs-kernel-server
 systemctl start nfs-kernel-server
 
 echo "[4/5] Konfiguracja miniDLNA (media server)..."
+mkdir -p /srv/nas/public/video /srv/nas/public/music /srv/nas/public/photos
 cat > /etc/minidlna.conf << 'EOF'
 media_dir=V,/srv/nas/public/video
 media_dir=A,/srv/nas/public/music
@@ -89,19 +101,12 @@ ufw default allow outgoing
 ufw allow ssh
 ufw allow 80/tcp      # Web UI
 ufw allow 443/tcp     # HTTPS
-ufw allow 137,138/udp # Samba
-ufw allow 139,445/tcp # Samba
+ufw allow 137/udp     # NetBIOS
+ufw allow 138/udp     # NetBIOS
+ufw allow 139/tcp     # Samba
+ufw allow 445/tcp     # Samba
 ufw allow 2049/tcp    # NFS
 ufw allow 8200/tcp    # miniDLNA
-ufw allow 9091/tcp    # Transmission
 ufw --force enable
 
-echo ""
-echo "=== NAS-PRO gotowy! ==="
-echo "Panel WWW:  http://$(hostname -I | awk '{print $1}')"
-echo "SSH:        ssh root@$(hostname -I | awk '{print $1}')"
-echo "Hasło root: admin (ZMIEŃ PO PIERWSZYM LOGOWANIU!)"
-echo ""
-
-# Restart nginx żeby załadować UI
-systemctl restart nginx
+echo "=== NAS-PRO Installation Completed Successfully ==="
