@@ -140,39 +140,74 @@ echo "[7/7] Generating hybrid ISO image..."
 # ===== POPRAWIONA SEKCJA BOOTLOADERA =====
 mkdir -p $ISODIR/isolinux
 
-# Kopiuj WSZYSTKIE niezbędne pliki Syslinux
-echo "Copying Syslinux files..."
+echo "DEBUG: Looking for Syslinux files..."
 
-# 1. isolinux.bin - główny bootloader
-if [ -f /usr/lib/ISOLINUX/isolinux.bin ]; then
-    cp /usr/lib/ISOLINUX/isolinux.bin $ISODIR/isolinux/
-elif [ -f /usr/lib/syslinux/isolinux.bin ]; then
-    cp /usr/lib/syslinux/isolinux.bin $ISODIR/isolinux/
-else
+# Znajdź wszystkie możliwe lokalizacje
+SYSLINUX_PATHS=(
+    "/usr/lib/syslinux/modules/bios"
+    "/usr/lib/syslinux/bios"
+    "/usr/lib/syslinux"
+    "/usr/lib/ISOLINUX"
+    "/usr/lib/syslinux/efi64"
+    "/usr/share/syslinux"
+    "/usr/lib/syslinux/efi"
+)
+
+# KOPIUJ ISOLINUX.BIN
+ISOLINUX_FOUND=0
+for path in "${SYSLINUX_PATHS[@]}"; do
+    if [ -f "$path/isolinux.bin" ]; then
+        cp "$path/isolinux.bin" $ISODIR/isolinux/
+        echo "  Found isolinux.bin in: $path"
+        ISOLINUX_FOUND=1
+        break
+    fi
+done
+
+if [ $ISOLINUX_FOUND -eq 0 ]; then
     echo "ERROR: isolinux.bin not found!"
+    echo "Searching entire /usr..."
+    find /usr -name "isolinux.bin" 2>/dev/null
     exit 1
 fi
 
-# 2. Wszystkie moduły .c32 - TO JEST KLUCZOWE!
-MODULES_DIRS="/usr/lib/syslinux/modules/bios /usr/lib/syslinux/bios /usr/lib/syslinux"
-MODULES="ldlinux.c32 libutil.c32 menu.c32 vesamenu.c32 chain.c32 reboot.c32 poweroff.c32"
+# KOPIUJ WSZYSTKIE MODUŁY .c32
+MODULES="ldlinux.c32 libutil.c32 menu.c32 vesamenu.c32 chain.c32 reboot.c32 poweroff.c32 libcom32.c32"
 
 for module in $MODULES; do
     FOUND=0
-    for dir in $MODULES_DIRS; do
-        if [ -f "$dir/$module" ]; then
-            cp "$dir/$module" $ISODIR/isolinux/
-            echo "  Copied $module"
+    for path in "${SYSLINUX_PATHS[@]}"; do
+        if [ -f "$path/$module" ]; then
+            cp "$path/$module" $ISODIR/isolinux/
+            echo "  Copied $module from $path"
             FOUND=1
             break
         fi
     done
     if [ $FOUND -eq 0 ]; then
-        echo "  WARNING: $module not found"
+        echo "  WARNING: $module not found - trying alternative..."
+        # Szukaj w całym systemie
+        FOUND_FILE=$(find /usr -name "$module" 2>/dev/null | head -1)
+        if [ -n "$FOUND_FILE" ]; then
+            cp "$FOUND_FILE" $ISODIR/isolinux/
+            echo "  Found and copied $module from $FOUND_FILE"
+        else
+            echo "  ERROR: $module not found anywhere!"
+        fi
     fi
 done
 
-# 3. Menu dla BIOS
+# SPRAWDŹ czy ldlinux.c32 został skopiowany
+if [ ! -f "$ISODIR/isolinux/ldlinux.c32" ]; then
+    echo "ERROR: ldlinux.c32 was not copied!"
+    echo "Available syslinux files on system:"
+    find /usr -name "*.c32" 2>/dev/null | head -10
+    exit 1
+fi
+
+echo "All Syslinux files copied successfully!"
+
+# Menu dla BIOS
 cat > $ISODIR/isolinux/isolinux.cfg << 'EOF'
 DEFAULT vesamenu.c32
 PROMPT 0
@@ -189,10 +224,6 @@ LABEL install-verbose
     MENU LABEL Install NAS-PRO (^Verbose)
     KERNEL /boot/vmlinuz
     APPEND initrd=/boot/initrd.img boot=live
-    
-LABEL memtest
-    MENU LABEL ^Memory Test
-    KERNEL /boot/memtest86+.bin
     
 LABEL reboot
     MENU LABEL ^Reboot
@@ -244,3 +275,8 @@ xorriso -as mkisofs -R -J -joliet-long \
 
 echo "=== Success! Created $OUTPUT ==="
 ls -lh $OUTPUT
+
+# Sprawdź zawartość ISO
+echo ""
+echo "Checking ISO content:"
+isoinfo -R -f -i $OUTPUT | grep -E "(isolinux|ldlinux)" | head -10
