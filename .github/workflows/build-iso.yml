@@ -1,60 +1,61 @@
-name: Build Debian ISO
+name: Build NAS-PRO ISO
 
 on:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      # -------------------------
+      # Node (React/Vite build)
+      # -------------------------
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build frontend (React/Vite)
+        run: npm run build
+
+      # -------------------------
+      # ISO dependencies
+      # -------------------------
+      - name: Install ISO tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            live-build \
+          sudo apt-get install -y \
             debootstrap \
             squashfs-tools \
             xorriso \
-            isolinux \
-            syslinux-efi \
             grub-pc-bin \
             grub-efi-amd64-bin \
-            mtools
-            
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
+            mtools \
+            live-build
 
-      - name: Install npm dependencies
-        run: npm ci
-
-      - name: Build React/Vite frontend
-        run: npm run build
-
+      # -------------------------
+      # Build ISO
+      # -------------------------
       - name: Make build script executable
         run: chmod +x build-iso.sh
 
-      - name: Build ISO
+      - name: Build NAS-PRO ISO
         run: sudo ./build-iso.sh
 
-      - name: Find built ISO
-        id: find_iso
-        run: |
-          ISO_PATH=$(find . -name "*.iso" | head -1)
-          echo "iso_path=$ISO_PATH" >> $GITHUB_OUTPUT
-          echo "Found ISO: $ISO_PATH"
-
-      - name: Upload ISO artifact
+      # -------------------------
+      # Upload artifact
+      # -------------------------
+      - name: Upload ISO
         uses: actions/upload-artifact@v4
         with:
-          name: nas-pro-debian-iso
-          path: ${{ steps.find_iso.outputs.iso_path }}
+          name: nas-pro-iso
+          path: nas-pro.iso
