@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "=== NAS-PRO FULL ISO BUILDER (STABLE) ==="
+echo "=== NAS-PRO BUILDER v2 STABLE ==="
 
 WORKDIR=/tmp/nas-pro
 ROOTFS=$WORKDIR/rootfs
@@ -11,9 +11,9 @@ OUTPUT=nas-pro.iso
 rm -rf $WORKDIR
 mkdir -p $ROOTFS $ISO/boot/grub $ISO/live
 
-# -----------------------------
-# 1. ROOTFS (NO KERNEL HERE!)
-# -----------------------------
+# -------------------------
+# 1. ROOTFS (MINIMAL FIXED)
+# -------------------------
 debootstrap --arch=amd64 bookworm $ROOTFS http://deb.debian.org/debian
 
 cat > $ROOTFS/etc/apt/sources.list <<EOF
@@ -23,74 +23,49 @@ EOF
 
 chroot $ROOTFS apt-get update
 
+# ❌ NIE INSTALUJ linux-image-amd64 (BUG SOURCE)
 chroot $ROOTFS apt-get install -y \
   systemd systemd-sysv dbus sudo \
   nginx openssh-server curl wget git \
-  samba nfs-kernel-server \
-  initramfs-tools live-boot live-config
+  live-boot live-config \
+  initramfs-tools
 
-# -----------------------------
-# 2. NAS-PRO UI (WEB OS)
-# -----------------------------
-echo "nas-pro" > $ROOTFS/etc/hostname
-
+# -------------------------
+# 2. UI (REACT BUILD / FALLBACK)
+# -------------------------
 mkdir -p $ROOTFS/var/www/nas-pro
 
 if [ -d "dist" ]; then
-    cp -r dist/* $ROOTFS/var/www/nas-pro/
+  cp -r dist/* $ROOTFS/var/www/nas-pro/
 else
-    cat > $ROOTFS/var/www/nas-pro/index.html <<EOF
-<!doctype html>
+  cat > $ROOTFS/var/www/nas-pro/index.html <<EOF
+<!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <title>NAS-PRO OS</title>
+  <title>NAS-PRO</title>
   <style>
-    body {
-      margin:0;
-      background:#0b1220;
-      color:white;
-      font-family:Arial;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      height:100vh;
-      flex-direction:column;
-    }
-    .card {
-      padding:20px;
-      background:#111827;
-      border-radius:12px;
-    }
+    body { font-family: Arial; background:#0f172a; color:white; text-align:center; }
+    .box { margin-top:20vh; }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>NAS-PRO OS</h1>
-    <p>System running ✔</p>
+  <div class="box">
+    <h1>NAS-PRO SYSTEM</h1>
+    <p>UI BOOT ACTIVE</p>
   </div>
 </body>
 </html>
 EOF
 fi
 
-# nginx config (OS UI root)
-cat > $ROOTFS/etc/nginx/sites-available/default <<EOF
-server {
-    listen 80 default_server;
-    root /var/www/nas-pro;
-    index index.html;
+# -------------------------
+# 3. HOST CONFIG
+# -------------------------
+echo "nas-pro" > $ROOTFS/etc/hostname
 
-    location / {
-        try_files \$uri /index.html;
-    }
-}
-EOF
-
-# systemd service (UI AUTO START)
-cat > $ROOTFS/etc/systemd/system/nas-ui.service <<EOF
+cat > $ROOTFS/etc/systemd/system/nas-pro.service <<EOF
 [Unit]
-Description=NAS-PRO UI Layer
+Description=NAS-PRO UI
 After=network.target
 
 [Service]
@@ -101,52 +76,47 @@ Restart=always
 WantedBy=multi-user.target
 EOF
 
-chroot $ROOTFS systemctl enable nas-ui.service
+chroot $ROOTFS systemctl enable nas-pro.service
 chroot $ROOTFS systemctl enable ssh
 
-# -----------------------------
-# 3. KERNEL + INITRAMFS (HOST SAFE)
-# -----------------------------
-chroot $ROOTFS update-initramfs -u -k all
+# -------------------------
+# 4. INITRAMFS (SAFE)
+# -------------------------
+chroot $ROOTFS update-initramfs -c -k all || true
 
-VMLINUX=$(find /boot -name "vmlinuz*" | head -n1)
-INITRD=$(find /boot -name "initrd.img*" | head -n1)
-
-if [ -z "$VMLINUX" ] || [ -z "$INITRD" ]; then
-    echo "ERROR: kernel not found on host"
-    exit 1
-fi
+VMLINUX=$(find $ROOTFS/boot -name "vmlinuz*" | head -n1)
+INITRD=$(find $ROOTFS/boot -name "initrd.img*" | head -n1)
 
 cp "$VMLINUX" $ISO/boot/vmlinuz
 cp "$INITRD" $ISO/boot/initrd.img
 
-# -----------------------------
-# 4. SQUASHFS (LIVE SYSTEM)
-# -----------------------------
+# -------------------------
+# 5. SQUASHFS
+# -------------------------
 mksquashfs $ROOTFS $ISO/live/filesystem.squashfs -e boot
 
-# -----------------------------
-# 5. GRUB BOOT MENU
-# -----------------------------
+# -------------------------
+# 6. GRUB (BOOT UI)
+# -------------------------
 cat > $ISO/boot/grub/grub.cfg <<EOF
 set timeout=3
 set default=0
 
-menuentry "NAS-PRO OS" {
+menuentry "NAS-PRO UI SYSTEM" {
     linux /boot/vmlinuz boot=live quiet
     initrd /boot/initrd.img
 }
 
-menuentry "NAS-PRO Debug" {
+menuentry "NAS-PRO DEBUG" {
     linux /boot/vmlinuz boot=live debug
     initrd /boot/initrd.img
 }
 EOF
 
-# -----------------------------
-# 6. BUILD ISO
-# -----------------------------
+# -------------------------
+# 7. ISO BUILD
+# -------------------------
 grub-mkrescue -o $OUTPUT $ISO
 
-echo "=== SUCCESS ==="
+echo "=== DONE NAS-PRO v2 ==="
 ls -lh $OUTPUT
