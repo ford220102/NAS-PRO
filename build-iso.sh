@@ -1,129 +1,111 @@
 #!/bin/bash
 set -euo pipefail
 
-echo "=== NAS-PRO v3 STABLE BUILDER ==="
+echo "=== NAS-PRO BUILDER v3 STABLE ==="
 
-DIST=bookworm
-ARCH=amd64
-LB_DIR=lb
+WORKDIR=/tmp/nas-pro
+ROOTFS=$WORKDIR/rootfs
+ISO=$WORKDIR/iso
 OUTPUT=nas-pro.iso
 
-rm -rf $LB_DIR
-mkdir -p $LB_DIR
-cd $LB_DIR
+rm -rf "$WORKDIR"
+mkdir -p "$ROOTFS" "$ISO/boot/grub" "$ISO/live"
 
-# -------------------------
-# LIVE-BUILD CONFIG
-# -------------------------
-lb config \
-  --distribution $DIST \
-  --architecture $ARCH \
-  --binary-images iso-hybrid \
-  --bootloader grub-efi \
-  --debian-installer false \
-  --archive-areas "main contrib non-free non-free-firmware" \
-  --firmware-chroot true \
-  --initsystem systemd
+# =========================================================
+# 1. BASE SYSTEM
+# =========================================================
+debootstrap --arch=amd64 bookworm "$ROOTFS" http://deb.debian.org/debian
 
-# -------------------------
-# PACKAGES (NO KERNEL!)
-# -------------------------
-mkdir -p config/package-lists
+# FIX: resolv + env issues
+cp /etc/resolv.conf "$ROOTFS/etc/resolv.conf"
 
-cat > config/package-lists/naspro.list.chroot <<EOF
-systemd
-systemd-sysv
-dbus
-sudo
-nginx
-openssh-server
-network-manager
-curl
-wget
-git
-nodejs
-npm
-live-boot
-live-config
+# =========================================================
+# 2. APT SOURCES
+# =========================================================
+cat > "$ROOTFS/etc/apt/sources.list" <<EOF
+deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware
+deb http://security.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware
 EOF
 
-# -------------------------
-# UI INJECTION (React/Vite)
-# -------------------------
-mkdir -p config/includes.chroot/var/www/nas-pro
+# =========================================================
+# 3. CORE SYSTEM (FIX FOR /usr/bin/env ERROR)
+# =========================================================
+chroot "$ROOTFS" /bin/bash -c "
+apt-get update &&
+apt-get install -y coreutils bash
 
-if [ -d "../dist" ]; then
-  cp -r ../dist/* config/includes.chroot/var/www/nas-pro/
+apt-get install -y \
+  linux-image-amd64 \
+  initramfs-tools \
+  systemd systemd-sysv dbus \
+  sudo nginx openssh-server \
+  curl wget git \
+  live-boot live-config
+"
+
+# =========================================================
+# 4. USER + CONFIG
+# =========================================================
+echo "nas-pro" > "$ROOTFS/etc/hostname"
+
+chroot "$ROOTFS" /bin/bash -c "
+useradd -m -s /bin/bash naspro || true
+echo 'naspro:naspro' | chpasswd
+echo 'root:naspro' | chpasswd
+"
+
+# =========================================================
+# 5. WEB UI (PLACEHOLDER OR DIST)
+# =========================================================
+mkdir -p "$ROOTFS/var/www/nas-pro"
+
+if [ -d dist ]; then
+  cp -r dist/* "$ROOTFS/var/www/nas-pro/"
 else
-  echo "<h1>NAS-PRO v3 UI</h1>" > config/includes.chroot/var/www/nas-pro/index.html
+  echo "<h1>NAS-PRO v3 UI</h1>" > "$ROOTFS/var/www/nas-pro/index.html"
 fi
 
-# -------------------------
-# NGINX CONFIG
-# -------------------------
-mkdir -p config/includes.chroot/etc/nginx/sites-available
+# =========================================================
+# 6. KERNEL + INITRD SAFE COPY
+# =========================================================
+KERNEL=$(ls "$ROOTFS/boot"/vmlinuz-* 2>/dev/null | head -n1 || true)
+INITRD=$(ls "$ROOTFS/boot"/initrd.img-* 2>/dev/null | head -n1 || true)
 
-cat > config/includes.chroot/etc/nginx/sites-available/default <<EOF
-server {
-  listen 80;
-  root /var/www/nas-pro;
-  index index.html;
+if [ -z "$KERNEL" ] || [ -z "$INITRD" ]; then
+  echo "ERROR: kernel or initrd missing"
+  exit 1
+fi
 
-  location / {
-    try_files \$uri \$uri/ /index.html;
-  }
+cp "$KERNEL" "$ISO/boot/vmlinuz"
+cp "$INITRD" "$ISO/boot/initrd.img"
 
-  location /api {
-    proxy_pass http://localhost:3000;
-  }
+# =========================================================
+# 7. SQUASHFS (ROOTFS)
+# =========================================================
+mksquashfs "$ROOTFS" "$ISO/live/filesystem.squashfs" -e boot
+
+# =========================================================
+# 8. GRUB CONFIG (SIMPLE + STABLE)
+# =========================================================
+cat > "$ISO/boot/grub/grub.cfg" <<EOF
+set timeout=3
+set default=0
+
+menuentry "NAS-PRO v3 Boot" {
+    linux /boot/vmlinuz boot=live quiet
+    initrd /boot/initrd.img
+}
+
+menuentry "NAS-PRO Debug" {
+    linux /boot/vmlinuz boot=live debug
+    initrd /boot/initrd.img
 }
 EOF
 
-# -------------------------
-# BACKEND (NODE API)
-# -------------------------
-mkdir -p config/includes.chroot/opt/naspro
+# =========================================================
+# 9. ISO BUILD
+# =========================================================
+grub-mkrescue -o "$OUTPUT" "$ISO"
 
-cat > config/includes.chroot/opt/naspro/server.js <<EOF
-const http = require('http');
-
-http.createServer((req,res)=>{
-  res.writeHead(200, {'Content-Type':'application/json'});
-  res.end(JSON.stringify({status:'ok', system:'NAS-PRO v3'}));
-}).listen(3000);
-EOF
-
-# -------------------------
-# SYSTEMD API
-# -------------------------
-mkdir -p config/includes.chroot/etc/systemd/system
-
-cat > config/includes.chroot/etc/systemd/system/naspro.service <<EOF
-[Unit]
-Description=NAS-PRO API
-After=network.target
-
-[Service]
-ExecStart=/usr/bin/node /opt/naspro/server.js
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# -------------------------
-# BUILD ISO
-# -------------------------
-lb build
-
-cd ..
-
-ISO_FILE=$(ls lb/live-image-amd64.hybrid.iso 2>/dev/null || true)
-
-if [ -f "$ISO_FILE" ]; then
-  mv "$ISO_FILE" $OUTPUT
-  echo "SUCCESS: $OUTPUT"
-else
-  echo "FAILED BUILD"
-  exit 1
-fi
+echo "=== DONE ==="
+ls -lh "$OUTPUT"
