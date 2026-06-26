@@ -1,48 +1,62 @@
-name: Build NAS-PRO ISO
+name: Build Debian ISO
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch:
+    branches:
+      - main
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 90
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            live-build \
             debootstrap \
             squashfs-tools \
             xorriso \
+            isolinux \
+            syslinux-efi \
             grub-pc-bin \
             grub-efi-amd64-bin \
-            mtools \
-            dosfstools
+            mtools
 
-      - name: Setup Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
-      - name: Build React UI
-        run: |
-          npm ci
-          npm run build
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build React/Vite frontend
+        run: npm run build
+
+      - name: Make build script executable
+        run: chmod +x build-iso.sh
 
       - name: Build ISO
-        run: |
-          sudo bash build-iso.sh
+        run: sudo ./build-iso.sh
 
-      - name: Upload ISO
+      - name: Find built ISO
+        id: find_iso
+        run: |
+          ISO_PATH=$(find . -name "*.iso" | head -1)
+          echo "iso_path=$ISO_PATH" >> $GITHUB_OUTPUT
+          echo "Found ISO: $ISO_PATH"
+
+      - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
         with:
-          name: nas-pro-iso
-          path: nas-pro.iso
-          retention-days: 7
+          name: nas-pro-debian-iso
+          path: ${{ steps.find_iso.outputs.iso_path }}
+          retention-days: 30
+          if-no-files-found: error
