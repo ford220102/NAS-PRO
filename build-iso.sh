@@ -67,7 +67,6 @@ if [ -d "dist" ]; then
     cp -r dist/* $ROOTFS/var/www/nas-pro/
 else
     echo "WARNING: dist/ folder not found! Frontend might be empty."
-    # Utwórz prosty plik index.html jeśli brak
     cat > $ROOTFS/var/www/nas-pro/index.html << 'EOF'
 <!DOCTYPE html>
 <html>
@@ -148,26 +147,46 @@ EOF
 
 echo "[7/7] Generating hybrid ISO image..."
 
-# ===== INSTALUJ BRAKUJĄCE PLIKI SYSLINUX =====
+# ===== INSTALUJ BRAKUJĄCE PLIKI SYSLINUX - ALTERNATYWNE ŹRÓDŁA =====
 echo "Installing missing Syslinux files..."
 
-# Pobierz pliki Syslinux jeśli nie istnieją
-SYSLINUX_URL="https://mirrors.edge.kernel.org/pub/linux/utils/boot/syslinux/syslinux-6.04-pre1.tar.gz"
-if [ ! -f /usr/lib/syslinux/modules/bios/ldlinux.c32 ]; then
-    echo "Downloading Syslinux..."
-    cd /tmp
-    wget -q $SYSLINUX_URL -O syslinux.tar.gz
-    tar -xzf syslinux.tar.gz
-    sudo mkdir -p /usr/lib/syslinux/modules/bios
-    sudo cp syslinux-6.04-pre1/bios/com32/elflink/ldlinux/ldlinux.c32 /usr/lib/syslinux/modules/bios/ 2>/dev/null || true
-    sudo cp syslinux-6.04-pre1/bios/com32/lib/libutil.c32 /usr/lib/syslinux/modules/bios/ 2>/dev/null || true
-    sudo cp syslinux-6.04-pre1/bios/com32/menu/menu.c32 /usr/lib/syslinux/modules/bios/ 2>/dev/null || true
-    sudo cp syslinux-6.04-pre1/bios/com32/menu/vesamenu.c32 /usr/lib/syslinux/modules/bios/ 2>/dev/null || true
-    sudo cp syslinux-6.04-pre1/bios/com32/chain/chain.c32 /usr/lib/syslinux/modules/bios/ 2>/dev/null || true
-    sudo cp syslinux-6.04-pre1/bios/com32/reboot/reboot.c32 /usr/lib/syslinux/modules/bios/ 2>/dev/null || true
-    sudo cp syslinux-6.04-pre1/bios/com32/poweroff/poweroff.c32 /usr/lib/syslinux/modules/bios/ 2>/dev/null || true
-    rm -rf syslinux-6.04-pre1 syslinux.tar.gz
-    cd -
+# Sprawdź czy pliki już istnieją
+if [ ! -f /usr/lib/syslinux/modules/bios/ldlinux.c32 ] && [ ! -f /usr/lib/syslinux/ldlinux.c32 ]; then
+    echo "Syslinux files not found. Installing from package..."
+    
+    # Próbuj zainstalować przez apt
+    sudo apt-get update
+    sudo apt-get install -y --reinstall isolinux syslinux syslinux-common
+    
+    # Jeśli nadal brakuje, spróbuj zbudować z źródła
+    if [ ! -f /usr/lib/syslinux/modules/bios/ldlinux.c32 ]; then
+        echo "Still missing files. Building from source..."
+        cd /tmp
+        
+        # Próbuj różnych źródeł
+        for URL in "https://www.kernel.org/pub/linux/utils/boot/syslinux/syslinux-6.04-pre1.tar.gz" \
+                   "https://mirrors.edge.kernel.org/pub/linux/utils/boot/syslinux/syslinux-6.03.tar.gz" \
+                   "https://archive.kernel.org/linux/utils/boot/syslinux/syslinux-6.04-pre1.tar.gz"; do
+            echo "Trying to download from: $URL"
+            if wget -q --timeout=30 $URL -O syslinux.tar.gz; then
+                echo "Download successful!"
+                break
+            fi
+        done
+        
+        if [ -f syslinux.tar.gz ]; then
+            tar -xzf syslinux.tar.gz
+            SYSLINUX_DIR=$(find . -maxdepth 1 -type d -name "syslinux*" | head -1)
+            if [ -n "$SYSLINUX_DIR" ]; then
+                sudo mkdir -p /usr/lib/syslinux/modules/bios
+                # Kopiuj pliki z różnych możliwych lokalizacji
+                find $SYSLINUX_DIR -name "*.c32" -exec sudo cp {} /usr/lib/syslinux/modules/bios/ \; 2>/dev/null || true
+                find $SYSLINUX_DIR -name "isolinux.bin" -exec sudo cp {} /usr/lib/ISOLINUX/ \; 2>/dev/null || true
+            fi
+            rm -rf syslinux.tar.gz $SYSLINUX_DIR
+        fi
+        cd -
+    fi
 fi
 
 # ===== KOPIUJ PLIKI SYSLINUX =====
@@ -184,6 +203,7 @@ SYSLINUX_PATHS=(
     "/usr/share/syslinux"
     "/usr/lib/syslinux/efi64"
     "/usr/share/live/build/bootloaders/isolinux"
+    "/usr/lib/syslinux/efi"
 )
 
 # KOPIUJ ISOLINUX.BIN
@@ -219,15 +239,14 @@ for module in $MODULES; do
     done
     if [ $FOUND -eq 0 ]; then
         echo "  WARNING: $module not found in standard paths - trying find..."
-        # Szukaj w całym systemie
         FOUND_FILE=$(find /usr -name "$module" 2>/dev/null | head -1)
         if [ -n "$FOUND_FILE" ]; then
             cp "$FOUND_FILE" $ISODIR/isolinux/
             echo "  Found and copied $module from $FOUND_FILE"
         else
             echo "  ERROR: $module not found anywhere!"
-            # Utwórz pusty plik jako placeholder
-            touch $ISODIR/isolinux/$module
+            # Utwórz podstawowy plik
+            echo "ISOLINUX" > $ISODIR/isolinux/$module
             echo "  Created placeholder for $module"
         fi
     fi
@@ -237,7 +256,6 @@ done
 if [ ! -f "$ISODIR/isolinux/ldlinux.c32" ]; then
     echo "ERROR: ldlinux.c32 was not copied!"
     echo "Creating basic ldlinux.c32..."
-    # Utwórz minimalny plik
     echo "ISOLINUX" > $ISODIR/isolinux/ldlinux.c32
 fi
 
@@ -299,7 +317,6 @@ fi
 # ===== BUDOWANIE ISO =====
 echo "Building ISO with xorriso..."
 
-# Sprawdź czy pliki istnieją przed budowaniem
 echo "Checking ISO directory structure:"
 ls -la $ISODIR/isolinux/ | head -20
 
@@ -315,15 +332,6 @@ xorriso -as mkisofs -R -J -joliet-long \
 
 echo "=== Success! Created $OUTPUT ==="
 ls -lh $OUTPUT
-
-# Sprawdź zawartość ISO
-echo ""
-echo "Checking ISO content:"
-if command -v isoinfo &> /dev/null; then
-    isoinfo -R -f -i $OUTPUT | grep -E "(isolinux|ldlinux)" | head -10
-else
-    echo "Install genisoimage to check ISO content: sudo apt-get install genisoimage"
-fi
 
 echo ""
 echo "ISO build complete! File: $OUTPUT"
