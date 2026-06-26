@@ -1,134 +1,83 @@
-# 🖥️ UGOS Pro NASware
+# UGOS Pro NASware v3.2
 
-> Full self-hosted NAS management platform — inspired by UGREEN UGOS Pro
-
-[![Deploy](https://github.com/USERNAME/ugospro/actions/workflows/deploy.yml/badge.svg)](https://github.com/USERNAME/ugospro/actions/workflows/deploy.yml)
-
-**Demo na żywo:** `https://TWÓJ_USER.github.io/ugospro`
+> NAS Management Platform — interfejs webowy w stylu UGREEN UGOS Pro
 
 ---
 
-## ✨ Co zawiera
-
-| Funkcja | Opis |
-|---------|------|
-| 🥾 **Boot Screen** | Auto-wykrywanie CPU/RAM/GPU/OS/VM/WSL2/Docker |
-| 🔐 **Login + 2FA** | Uwierzytelnianie z kodem TOTP |
-| 🖥️ **Pulpit** | Przeciągane okna, dock, topbar na żywo |
-| 🎬 **Video Player** | Biblioteka wideo z pełnym odtwarzaczem |
-| 🎵 **Music Player** | FLAC/MP3, albumy, artyści, gatunki |
-| 📤 **Upload Manager** | Drag & drop na wolumeny NAS |
-| 🛍️ **App Center** | 12+ aplikacji Docker z instalatorem |
-| ⬇️ **Install Wizard** | Wybór dysku, GPU, PUID/PGID, docker-compose |
-| 🐳 **Container Manager** | Start/Stop/Remove kontenerów |
-| 🔵 **GPU Panel** | iGPU/dGPU: lspci, VAAPI, QuickSync, encodery |
-| 🛡️ **VPN Manager** | WireGuard + OpenVPN, tunnele, serwery |
-| 💽 **Storage Manager** | Wolumeny NVMe/RAID/HDD |
-| 🌐 **Network Center** | Interfejsy sieciowe |
-| 🔐 **Security Advisor** | Firewall, audit log, 2FA |
-| 🖥️ **Control Panel** | Sensory, wentylatory, zadania, użytkownicy |
-| 🎨 **Animated Background** | Canvas aurora + cząsteczki |
-
----
-
-## 🚀 Deploy na GitHub Pages (3 kroki)
-
-### Krok 1 — Fork lub klonuj
-
-```bash
-git clone https://github.com/TWÓJ_USER/ugospro.git
-cd ugospro
-```
-
-### Krok 2 — Push na GitHub
-
-```bash
-git remote set-url origin https://github.com/TWÓJ_USER/ugospro.git
-git push -u origin main
-```
-
-### Krok 3 — Włącz GitHub Pages
-
-1. Repo → **Settings** → **Pages**
-2. Source: **"GitHub Actions"**
-3. Czekaj ~2 minuty
-
-✅ Gotowe: **`https://TWÓJ_USER.github.io/ugospro`**
-
-**Każdy `git push` = automatyczny redeploy!**
-
----
-
-## 💻 Lokalnie
+## 🚀 Szybki start (przeglądarka)
 
 ```bash
 npm install
 npm run dev
-# → http://localhost:5173
 ```
 
-## 🐳 Docker na NAS
+Otwórz **http://localhost:5173**
+
+**Dane logowania demo:**
+- `admin` / `admin` (+ 2FA: `123456`)
+- `user` / `user123`
+
+---
+
+## 💿 Budowanie ISO (Linux/Ubuntu)
 
 ```bash
-docker run -d -p 3000:3000 \
-  -v $(pwd):/app -w /app \
-  node:20-alpine \
-  sh -c "npm install && npm run dev -- --host"
-# → http://192.168.1.X:3000
+# Wymagania
+sudo apt-get install debootstrap squashfs-tools xorriso grub-pc-bin grub-efi-amd64-bin mtools
+
+# Zbuduj React UI
+npm ci && npm run build:fast
+
+# Zbuduj ISO (wymaga root)
+chmod +x build-iso.sh
+sudo ./build-iso.sh
 ```
+
+Powstanie plik `nas-pro.iso` gotowy do uruchomienia w VirtualBox lub na pendrive.
 
 ---
 
-## 🔑 Kredencjały demo
+## 🖥️ VirtualBox — konfiguracja
 
-| User | Hasło | 2FA |
-|------|-------|-----|
-| `admin` | `admin` | `123456` |
-| `user` | `user123` | — |
+1. **Nowa VM** → Typ: `Linux`, Wersja: `Debian (64-bit)`
+2. RAM: minimum **2 GB** (zalecane 4 GB)
+3. Dysk: **20 GB** (opcjonalnie)
+4. Sieć: **NAT** lub **Host-only Adapter**
+5. Nośnik optyczny: załaduj `nas-pro.iso`
+6. Uruchom VM
 
----
-
-## 📁 Struktura
-
-```
-ugospro/
-├── .github/workflows/deploy.yml  ← Auto GitHub Pages deploy
-├── src/
-│   ├── App.tsx
-│   ├── main.tsx
-│   ├── components/
-│   │   ├── AnimatedBackground.tsx
-│   │   ├── AppStore.tsx
-│   │   ├── BackupCenter.tsx
-│   │   ├── BootScreen.tsx
-│   │   ├── ControlPanel.tsx
-│   │   ├── Desktop.tsx
-│   │   ├── DockerManager.tsx
-│   │   ├── FanMonitor.tsx
-│   │   ├── FileManager.tsx
-│   │   ├── GpuPanel.tsx        ← lspci, VAAPI, QuickSync
-│   │   ├── LoginScreen.tsx     ← 2FA
-│   │   ├── MusicPlayer.tsx     ← FLAC/MP3 library
-│   │   ├── NetworkCenter.tsx
-│   │   ├── PhotoApp.tsx
-│   │   ├── SecurityCenter.tsx
-│   │   ├── StorageManager.tsx
-│   │   ├── UgosProSystem.tsx   ← Boot→Login→Desktop
-│   │   ├── UploadManager.tsx   ← Drag & drop
-│   │   ├── VideoPlayer.tsx     ← Video library
-│   │   ├── VpnManager.tsx      ← WireGuard/OpenVPN
-│   │   └── WizardModal.tsx     ← Install wizard
-│   └── data/
-│       ├── catalog.ts
-│       ├── hooks.ts
-│       └── theme.ts
-├── index.html
-├── vite.config.ts
-├── package.json
-└── tsconfig.app.json
-```
+Po uruchomieniu:
+- Poczekaj na boot (30–60 sekund)
+- Otwórz przeglądarkę na hoście: `http://<IP_VM>`
+- Lub w VM: `http://localhost`
 
 ---
 
-*UGOS Pro NASware — inspirowany platformą UGREEN · React 18 + Vite 5 + TypeScript*
-# asdf
+## 🌐 GitHub Actions (automatyczne ISO)
+
+Push na `main` automatycznie buduje ISO.  
+Pobierz z zakładki **Actions → Artifacts**.
+
+---
+
+## 📁 Udostępnianie plików
+
+| Protokół | Adres                    |
+|----------|--------------------------|
+| SMB/Samba| `\\nas-pro\Public`       |
+| NFS      | `nas-pro:/srv/nas/public`|
+| DLNA     | Auto-wykrycie w sieci    |
+| Web      | `http://nas-pro`         |
+
+---
+
+## 🔧 Domyślne dane
+
+| Parametr | Wartość     |
+|----------|-------------|
+| Użytkownik | `naspro`  |
+| Hasło    | `naspro`    |
+| Root     | `naspro`    |
+| Web UI   | port `80`   |
+| SSH      | port `22`   |
+| API      | port `3000` |

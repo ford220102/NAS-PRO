@@ -1,78 +1,89 @@
 #!/bin/bash
+# Hook wykonywany wewnątrz chroot podczas budowania live systemu
 set -e
 
-echo "=== NAS-PRO HOOK: base system setup ==="
+echo "=== NAS-PRO HOOK: konfiguracja bazy systemu ==="
 
-# ----------------------------
-# USERS
-# ----------------------------
-useradd -m -s /bin/bash naspro || true
+# ── Użytkownicy ───────────────────────────────────────────
+useradd -m -s /bin/bash naspro 2>/dev/null || true
 echo "naspro:naspro" | chpasswd
-usermod -aG sudo naspro
+echo "root:naspro"   | chpasswd
+usermod -aG sudo,adm naspro 2>/dev/null || true
+usermod -aG docker   naspro 2>/dev/null || true
 
-# root password (DEV MODE)
-echo "root:naspro" | chpasswd
+# ── Katalogi NAS ──────────────────────────────────────────
+mkdir -p /srv/nas/public /srv/nas/data
+mkdir -p /srv/nas/public/{video,music,photos,downloads}
+mkdir -p /opt/naspro /var/log/naspro /var/lib/naspro
 
-# ----------------------------
-# PACKAGES (SAFE ENABLE SERVICES)
-# ----------------------------
-systemctl enable ssh || true
-systemctl enable nginx || true
-systemctl enable systemd-networkd || true
-systemctl enable systemd-resolved || true
-
-# ----------------------------
-# BASIC DIRECTORIES
-# ----------------------------
-mkdir -p /opt/naspro
-mkdir -p /var/lib/naspro
-mkdir -p /var/log/naspro
-
-# ----------------------------
-# BACKEND PLACEHOLDER (UI API READY)
-# ----------------------------
+# ── API Backend ───────────────────────────────────────────
 cat > /opt/naspro/server.js << 'EOF'
-const http = require("http");
+const http = require('http');
+const os   = require('os');
+const { execSync } = require('child_process');
+
+function safeExec(cmd) {
+  try { return execSync(cmd, {encoding:'utf8'}).trim(); }
+  catch { return 'N/A'; }
+}
 
 const server = http.createServer((req, res) => {
-  if (req.url === "/api/status") {
-    res.writeHead(200, {"Content-Type":"application/json"});
-    res.end(JSON.stringify({
-      system: "NAS-PRO",
-      status: "online"
-    }));
-    return;
-  }
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Access-Control-Allow-Origin', '*');
 
-  res.writeHead(200, {"Content-Type":"text/plain"});
-  res.end("NAS-PRO API running");
+  const data = {
+    system: 'UGOS Pro',
+    version: '3.2.0',
+    hostname: os.hostname(),
+    uptime: os.uptime(),
+    cpus: os.cpus().length,
+    totalMem: os.totalmem(),
+    freeMem: os.freemem(),
+    platform: os.platform(),
+    dockerVersion: safeExec('docker --version'),
+    ip: safeExec("hostname -I | awk '{print $1}'"),
+  };
+
+  res.end(JSON.stringify(data));
 });
 
-server.listen(3000, () => {
-  console.log("NAS-PRO API on :3000");
+server.listen(3000, '127.0.0.1', () => {
+  console.log('[UGOS Pro API] Nasłuchuje na :3000');
 });
 EOF
 
 chown -R naspro:naspro /opt/naspro
 chmod +x /opt/naspro/server.js
 
-# ----------------------------
-# SYSTEMD BACKEND SERVICE
-# ----------------------------
+# ── Serwis systemd ────────────────────────────────────────
 cat > /etc/systemd/system/naspro-api.service << 'EOF'
 [Unit]
-Description=NAS-PRO API
-After=network.target
+Description=UGOS Pro API Backend
+After=network-online.target
+Wants=network-online.target
 
 [Service]
-ExecStart=/usr/bin/node /opt/naspro/server.js
-Restart=always
+Type=simple
 User=naspro
+WorkingDirectory=/opt/naspro
+ExecStart=/usr/bin/node /opt/naspro/server.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=naspro-api
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-systemctl enable naspro-api || true
+# ── Włącz usługi ─────────────────────────────────────────
+systemctl enable ssh          2>/dev/null || true
+systemctl enable nginx        2>/dev/null || true
+systemctl enable naspro-api   2>/dev/null || true
+systemctl enable docker       2>/dev/null || true
+systemctl enable smbd nmbd    2>/dev/null || true
+systemctl enable systemd-networkd 2>/dev/null || true
+systemctl enable systemd-resolved 2>/dev/null || true
 
-echo "HOOK 9990 done"
+echo "=== HOOK 9990 zakończony ==="

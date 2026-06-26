@@ -1,102 +1,122 @@
 #!/bin/bash
+# Hook: konfiguracja nginx + web UI
 set -e
 
 echo "=== NAS-PRO UI CONFIG HOOK ==="
 
-# ----------------------------
-# WEB UI FOLDER
-# ----------------------------
 mkdir -p /var/www/nas-pro
 
-# jeśli React build istnieje
-if [ -d /usr/share/naspro ]; then
+# Skopiuj React build jeśli istnieje
+if [ -d /usr/share/naspro ] && [ -f /usr/share/naspro/index.html ]; then
     cp -r /usr/share/naspro/* /var/www/nas-pro/
-fi
-
-# fallback UI (UGREEN STYLE SIMPLE DASHBOARD)
-cat > /var/www/nas-pro/index.html << 'EOF'
+    echo "[OK] React UI skopiowane"
+else
+    echo "[WARN] Brak React build — używam fallback UI"
+    cat > /var/www/nas-pro/index.html << 'HTMLEOF'
 <!DOCTYPE html>
-<html>
+<html lang="pl">
 <head>
-  <title>NAS-PRO UI</title>
-  <style>
-    body {
-      margin:0;
-      font-family:Arial;
-      background:#0b1220;
-      color:white;
-    }
-
-    .topbar {
-      height:60px;
-      background:#111827;
-      display:flex;
-      align-items:center;
-      padding:0 20px;
-      font-weight:bold;
-    }
-
-    .grid {
-      display:grid;
-      grid-template-columns:repeat(4,1fr);
-      gap:15px;
-      padding:20px;
-    }
-
-    .card {
-      background:#1f2937;
-      padding:20px;
-      border-radius:12px;
-      text-align:center;
-      cursor:pointer;
-    }
-
-    .card:hover {
-      background:#374151;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UGOS Pro NAS</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Inter',system-ui,sans-serif;background:#05070b;color:#e2eaf5;min-height:100vh;display:flex;flex-direction:column}
+  header{height:50px;background:rgba(5,7,11,.9);border-bottom:1px solid #1a2535;display:flex;align-items:center;padding:0 20px;gap:12px}
+  .logo{width:28px;height:28px;background:linear-gradient(135deg,#00c2a8,#14b8a6);border-radius:7px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:10px;color:#000}
+  .brand{font-size:14px;font-weight:800}
+  .brand span{color:#00c2a8}
+  .status{margin-left:auto;font-size:11px;color:#22c55e;display:flex;align-items:center;gap:6px}
+  .dot{width:6px;height:6px;border-radius:50%;background:#22c55e}
+  main{flex:1;padding:20px}
+  h2{font-size:13px;color:#64748b;margin-bottom:12px;text-transform:uppercase;letter-spacing:1px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:24px}
+  .card{background:#0f1521;border:1px solid #1a2535;border-radius:12px;padding:20px;text-align:center;cursor:pointer;transition:all .15s}
+  .card:hover{background:#131c28;border-color:#2a3f5a;transform:translateY(-2px)}
+  .card .icon{font-size:28px;margin-bottom:8px}
+  .card .label{font-size:11px;color:#94a3b8}
+  .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
+  .stat{background:#0f1521;border:1px solid #1a2535;border-radius:10px;padding:14px}
+  .stat .val{font-size:20px;font-weight:800;color:#00c2a8;margin-bottom:2px}
+  .stat .key{font-size:10px;color:#64748b}
+</style>
 </head>
 <body>
+<header>
+  <div class="logo">UG</div>
+  <div class="brand">UGOS <span>Pro</span></div>
+  <div class="status"><div class="dot"></div> System online</div>
+</header>
+<main>
+  <div class="stat-grid">
+    <div class="stat"><div class="val" id="cpu">—</div><div class="key">CPU</div></div>
+    <div class="stat"><div class="val" id="ram">—</div><div class="key">RAM</div></div>
+    <div class="stat"><div class="val" id="up">—</div><div class="key">Uptime</div></div>
+    <div class="stat"><div class="val" id="ip">—</div><div class="key">IP</div></div>
+  </div>
+  <h2>Aplikacje</h2>
+  <div class="grid">
+    <div class="card"><div class="icon">📂</div><div class="label">Pliki</div></div>
+    <div class="card"><div class="icon">💽</div><div class="label">Storage</div></div>
+    <div class="card"><div class="icon">🐳</div><div class="label">Docker</div></div>
+    <div class="card"><div class="icon">🌐</div><div class="label">Sieć</div></div>
+    <div class="card"><div class="icon">🔐</div><div class="label">Bezpieczeństwo</div></div>
+    <div class="card"><div class="icon">🎬</div><div class="label">Media (DLNA)</div></div>
+    <div class="card"><div class="icon">🔄</div><div class="label">Backup</div></div>
+    <div class="card"><div class="icon">⚙️</div><div class="label">Ustawienia</div></div>
+  </div>
+</main>
+<script>
+async function fetchStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    const mem = d.totalMem - d.freeMem;
+    document.getElementById('ram').textContent = (mem/1024/1024/1024).toFixed(1)+'GB';
+    document.getElementById('up').textContent  = Math.floor(d.uptime/3600)+'h';
+    document.getElementById('ip').textContent  = d.ip || 'N/A';
+  } catch(e) {}
+}
+fetchStatus();
+setInterval(fetchStatus, 5000);
 
-<div class="topbar">
-  NAS-PRO Control Center
-</div>
-
-<div class="grid">
-  <div class="card">📁 Files</div>
-  <div class="card">💾 Storage</div>
-  <div class="card">👤 Users</div>
-  <div class="card">⚙️ Settings</div>
-  <div class="card">🌐 Network</div>
-  <div class="card">🐳 Docker</div>
-  <div class="card">📊 Monitoring</div>
-  <div class="card">🔐 Security</div>
-</div>
-
+// CPU usage placeholder (nie dostępne bez backend)
+let c=Math.random()*20+5;
+setInterval(()=>{
+  c=Math.max(2,Math.min(80,c+(Math.random()-0.5)*8));
+  document.getElementById('cpu').textContent=c.toFixed(0)+'%';
+},2000);
+document.getElementById('cpu').textContent=c.toFixed(0)+'%';
+</script>
 </body>
 </html>
-EOF
+HTMLEOF
+fi
 
-# ----------------------------
-# NGINX CONFIG (UI + API)
-# ----------------------------
+# ── Nginx config ──────────────────────────────────────────
 cat > /etc/nginx/sites-available/default << 'EOF'
 server {
-    listen 80;
+    listen 80 default_server;
+    listen [::]:80 default_server;
     root /var/www/nas-pro;
     index index.html;
+    server_name _;
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript;
 
     location / {
         try_files $uri $uri/ /index.html;
     }
 
-    location /api {
-        proxy_pass http://localhost:3000;
+    location /api/ {
+        proxy_pass http://127.0.0.1:3000/;
+        proxy_http_version 1.1;
         proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 }
 EOF
 
-systemctl enable nginx || true
-
-echo "UI CONFIG DONE"
+systemctl enable nginx 2>/dev/null || true
+echo "=== UI CONFIG HOOK zakończony ==="
