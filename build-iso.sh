@@ -136,14 +136,41 @@ menuentry "Install NAS-PRO" {
 EOF
 
 echo "[7/7] Generating hybrid ISO image..."
-# Generowanie uniwersalnego obrazu ISO (BIOS + UEFI)
-grub-mkstandalone -O i386-pc -o $WORKDIR/core.img --modules="biosdisk part_msdos sectors static_pkg target_module"
+
+# 1. Tworzenie katalogu na pliki rozruchowe GRUB wewnątrz struktury ISO
+mkdir -p $ISODIR/boot/grub/i386-pc
+
+# 2. Generowanie obrazu core.img dla tradycyjnego BIOS (i386-pc)
+# Poprawiono literówki w modułach (biosdisk, part_msdos, part_gpt, normal, iso9660)
+grub-mkstandalone -d /usr/lib/grub/i386-pc/ \
+  -O i386-pc \
+  --modules="biosdisk part_msdos part_gpt normal iso9660 search" \
+  -o $ISODIR/boot/grub/i386-pc/eltorito.img \
+  "boot/grub/grub.cfg=$ISODIR/boot/grub/grub.cfg"
+
+# 3. Generowanie obrazu dla UEFI (x86_64-efi) - opcjonalne, ale zalecane dla pełnej hybrydy
+mkdir -p $WORKDIR/efi/boot
+grub-mkstandalone -d /usr/lib/grub/x86_64-efi/ \
+  -O x86_64-efi \
+  --modules="part_msdos part_gpt normal iso9660 search" \
+  -o $WORKDIR/efi/boot/bootx64.efi \
+  "boot/grub/grub.cfg=$ISODIR/boot/grub/grub.cfg"
+
+# Pakowanie katalogu EFI do obrazu FAT (wymagane przez specyfikację UEFI)
+dd if=/dev/zero of=$ISODIR/boot/grub/efi.img bs=1M count=4
+mkfs.vfat $ISODIR/boot/grub/efi.img
+mmd -i $ISODIR/boot/grub/efi.img ::/EFI
+mmd -i $ISODIR/boot/grub/efi.img ::/EFI/BOOT
+mcopy -i $ISODIR/boot/grub/efi.img $WORKDIR/efi/boot/bootx64.efi ::/EFI/BOOT/BOOTX64.EFI
+
+# 4. Finalne budowanie hybrydowego ISO przez xorriso
 xorriso -as mkisofs -R -J -joliet-long \
   -b boot/grub/i386-pc/eltorito.img \
   -no-emul-boot -boot-load-size 4 -boot-info-table \
   -eltorito-alt-boot \
   -e boot/grub/efi.img \
   -no-emul-boot \
+  -isohybrid-gpt-basdat \
   -o $OUTPUT $ISODIR
 
 echo "=== Success! Created $OUTPUT ==="
