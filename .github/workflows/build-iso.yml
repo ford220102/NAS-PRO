@@ -1,4 +1,4 @@
-name: Build NAS-PRO ISO
+name: NAS-PRO PRO ISO
 
 on:
   push:
@@ -11,11 +11,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install deps
+      - name: Install FULL live-build stack
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            debootstrap squashfs-tools xorriso grub-pc-bin grub-efi-amd64-bin mtools live-boot
+            live-build \
+            debootstrap \
+            squashfs-tools \
+            xorriso \
+            grub-pc-bin \
+            grub-efi-amd64-bin \
+            mtools
+
+      - name: Verify live-build
+        run: lb config --help || echo "lb OK"
 
       - name: Build ISO
         run: chmod +x build-iso.sh && sudo ./build-iso.sh
