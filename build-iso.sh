@@ -137,41 +137,41 @@ EOF
 
 echo "[7/7] Generating hybrid ISO image..."
 
-# 1. Tworzenie katalogu na pliki rozruchowe GRUB wewnątrz struktury ISO
+# 1. Tworzenie katalogów struktury GRUB w ISO
 mkdir -p $ISODIR/boot/grub/i386-pc
 mkdir -p $ISODIR/boot/grub/x86_64-efi
 
-# 2. Generowanie MINIMALNEGO obrazu core dla tradycyjnego BIOS (i386-pc)
-# Usuwamy osadzanie grub.cfg, aby zmieścić się w limicie rozmiaru (0x78000)
+# 2. Skopiowanie PEŁNEJ bazy modułów do struktury ISO (będą ładowane z płyty)
+cp /usr/lib/grub/i386-pc/*.mod $ISODIR/boot/grub/i386-pc/
+cp /usr/lib/grub/i386-pc/*.lst $ISODIR/boot/grub/i386-pc/
+cp /usr/lib/grub/x86_64-efi/*.mod $ISODIR/boot/grub/x86_64-efi/
+cp /usr/lib/grub/x86_64-efi/*.lst $ISODIR/boot/grub/x86_64-efi/
+
+# 3. Generowanie obrazu core dla BIOS (i386-pc)
+# KLUCZOWA ZMIANA: --install-modules ogranicza pakiety wbudowane w plik binarny,
+# a grub.cfg jest ładowany bezpośrednio z katalogu tekstowego ISO.
 grub-mkstandalone -d /usr/lib/grub/i386-pc/ \
   -O i386-pc \
-  --modules="biosdisk part_msdos part_gpt normal iso9660 search" \
+  --install-modules="biosdisk part_msdos part_gpt iso9660 normal search" \
+  --modules="biosdisk part_msdos part_gpt iso9660 normal search" \
   -o $ISODIR/boot/grub/i386-pc/eltorito.img
 
-# 3. Generowanie obrazu dla UEFI (x86_64-efi)
-# Tutaj rozmiar nie jest tak rygorystyczny, ale też ładujemy go uniwersalnie
+# 4. Generowanie obrazu dla UEFI (x86_64-efi)
 mkdir -p $WORKDIR/efi/boot
 grub-mkstandalone -d /usr/lib/grub/x86_64-efi/ \
   -O x86_64-efi \
-  --modules="part_msdos part_gpt normal iso9660 search" \
+  --install-modules="part_msdos part_gpt iso9660 normal search" \
+  --modules="part_msdos part_gpt iso9660 normal search" \
   -o $WORKDIR/efi/boot/bootx64.efi
 
-# Pakowanie katalogu EFI do dedykowanego obrazu FAT (wymagane przez UEFI)
+# Pakowanie UEFI do dedykowanego obrazu FAT (wymóg UEFI)
 dd if=/dev/zero of=$ISODIR/boot/grub/efi.img bs=1M count=4
 mkfs.vfat $ISODIR/boot/grub/efi.img
 mmd -i $ISODIR/boot/grub/efi.img ::/EFI
 mmd -i $ISODIR/boot/grub/efi.img ::/EFI/BOOT
 mcopy -i $ISODIR/boot/grub/efi.img $WORKDIR/efi/boot/bootx64.efi ::/EFI/BOOT/BOOTX64.EFI
 
-# 4. DODATKOWO: Skopiowanie niezbędnych plików modułów bezpośrednio do ISO,
-# dzięki czemu minimalny obraz rozruchowy będzie mógł je doładować podczas startu komputera
-cp /usr/lib/grub/i386-pc/*.mod $ISODIR/boot/grub/i386-pc/
-cp /usr/lib/grub/i386-pc/*.lst $ISODIR/boot/grub/i386-pc/
-cp /usr/lib/grub/x86_64-efi/*.mod $ISODIR/boot/grub/x86_64-efi/
-cp /usr/lib/grub/x86_64-efi/*.lst $ISODIR/boot/grub/x86_64-efi/
-
-# 5. Finalne budowanie hybrydowego ISO przez xorriso
-# Dodano flagi wymagane do prawidłowego zmapowania katalogu boot i uruchomienia bios/gpt
+# 5. Budowanie hybrydowego ISO przez xorriso
 xorriso -as mkisofs -R -J -joliet-long \
   -b boot/grub/i386-pc/eltorito.img \
   -no-emul-boot -boot-load-size 4 -boot-info-table \
