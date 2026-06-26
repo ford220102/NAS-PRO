@@ -47,8 +47,8 @@ jobs:
       # ── Buduj ISO ──────────────────────────────────────
       - name: Buduj ISO (dist/ jest w katalogu roboczym)
         run: |
-          chmod +x build-iso-v5.sh
-          sudo ./build-iso-v5.sh nas-pro.iso
+          chmod +x build-iso.sh
+          sudo ./build-iso.sh nas-pro.iso
         # build-iso-v5.sh wykryje dist/ w SCRIPT_DIR i wbuduje React UI
 
       - name: Weryfikuj ISO
