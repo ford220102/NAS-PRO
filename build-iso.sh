@@ -55,13 +55,11 @@ chroot $ROOTFS apt-get install -y --no-install-recommends \
   xfsprogs \
   smartmontools \
   hdparm \
-  lsblk \
   parted \
   fdisk \
   rsync \
   borgbackup \
   avahi-daemon \
-  netatalk \
   minidlna \
   transmission-daemon \
   ffmpeg \
@@ -70,29 +68,19 @@ chroot $ROOTFS apt-get install -y --no-install-recommends \
   sudo \
   acl \
   attr \
-  quota \
   ntp \
-  chrony \
   wireguard \
   openvpn \
-  bind9-utils \
   dnsmasq \
-  hostapd \
   snmp \
   lm-sensors \
-  fancontrol \
   i2c-tools \
   pciutils \
   usbutils \
   cryptsetup \
-  ecryptfs-utils \
-  zfsutils-linux \
   open-iscsi \
-  targetcli-fb \
   nfs-common \
   cifs-utils \
-  fuse3 \
-  sshfs \
   screen \
   tmux \
   zip \
@@ -100,7 +88,7 @@ chroot $ROOTFS apt-get install -y --no-install-recommends \
   p7zip-full \
   tar \
   gzip
-
+  
 echo "[4/7] Installing Node.js 20 LTS..."
 chroot $ROOTFS bash -c "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -"
 chroot $ROOTFS apt-get install -y nodejs
