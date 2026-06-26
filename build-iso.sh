@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "=== NAS-PRO CLEAN ISO BUILDER ==="
+echo "=== NAS-PRO CLEAN ISO BUILDER (FIXED) ==="
 
 WORKDIR=/tmp/nas-pro
 ROOTFS=$WORKDIR/rootfs
@@ -12,7 +12,7 @@ rm -rf $WORKDIR
 mkdir -p $ROOTFS $ISO/boot/grub $ISO/live
 
 # -----------------------------
-# 1. ROOTFS (Debian)
+# 1. ROOTFS
 # -----------------------------
 debootstrap --arch=amd64 bookworm $ROOTFS http://deb.debian.org/debian
 
@@ -22,7 +22,10 @@ deb http://security.debian.org/debian-security bookworm-security main contrib no
 EOF
 
 chroot $ROOTFS apt-get update
+
 chroot $ROOTFS apt-get install -y \
+  linux-image-amd64 \
+  initramfs-tools \
   systemd systemd-sysv dbus sudo \
   nginx openssh-server curl wget git \
   samba nfs-kernel-server \
@@ -53,15 +56,23 @@ chroot $ROOTFS systemctl enable nas-pro.service
 chroot $ROOTFS systemctl enable ssh
 
 # -----------------------------
-# 3. SQUASHFS
+# 3. INITRAMFS + KERNEL FIX
+# -----------------------------
+chroot $ROOTFS update-initramfs -u -k all
+
+VMLINUX=$(ls $ROOTFS/boot/vmlinuz-* | head -n1)
+INITRD=$(ls $ROOTFS/boot/initrd.img-* | head -n1)
+
+cp "$VMLINUX" $ISO/boot/vmlinuz
+cp "$INITRD" $ISO/boot/initrd.img
+
+# -----------------------------
+# 4. SQUASHFS
 # -----------------------------
 mksquashfs $ROOTFS $ISO/live/filesystem.squashfs -e boot
 
-cp $ROOTFS/boot/vmlinuz-* $ISO/boot/vmlinuz
-cp $ROOTFS/boot/initrd.img-* $ISO/boot/initrd.img
-
 # -----------------------------
-# 4. GRUB (ONLY BOOTLOADER)
+# 5. GRUB
 # -----------------------------
 cat > $ISO/boot/grub/grub.cfg <<EOF
 set timeout=3
@@ -79,9 +90,9 @@ menuentry "NAS-PRO Debug" {
 EOF
 
 # -----------------------------
-# 5. BUILD ISO (CLEAN)
+# 6. ISO BUILD (SAFE)
 # -----------------------------
 grub-mkrescue -o $OUTPUT $ISO
 
-echo "DONE -> $OUTPUT"
+echo "=== DONE ==="
 ls -lh $OUTPUT

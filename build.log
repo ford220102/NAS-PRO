@@ -1,0 +1,3 @@
+=== NAS-PRO ISO Builder ===
+[1/7] Bootstrapping Debian Bookworm...
+./build-iso.sh: line 16: debootstrap: command not found

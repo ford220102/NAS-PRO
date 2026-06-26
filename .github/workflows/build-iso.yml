@@ -2,58 +2,23 @@ name: Build NAS-PRO ISO
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # -------------------------
-      # Node (React/Vite build)
-      # -------------------------
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: Install frontend deps
-        run: npm ci
-
-      - name: Build frontend (React/Vite)
-        run: npm run build
-
-      # -------------------------
-      # ISO dependencies
-      # -------------------------
-      - name: Install ISO tools
+      - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            debootstrap \
-            squashfs-tools \
-            xorriso \
-            grub-pc-bin \
-            grub-efi-amd64-bin \
-            mtools \
-            live-build
+          sudo apt-get install -y debootstrap squashfs-tools xorriso grub-pc-bin grub-efi-amd64-bin mtools
 
-      # -------------------------
-      # Build ISO
-      # -------------------------
-      - name: Make build script executable
-        run: chmod +x build-iso.sh
+      - name: Build ISO
+        run: chmod +x build-iso.sh && sudo ./build-iso.sh
 
-      - name: Build NAS-PRO ISO
-        run: sudo ./build-iso.sh
-
-      # -------------------------
-      # Upload artifact
-      # -------------------------
       - name: Upload ISO
         uses: actions/upload-artifact@v4
         with:
