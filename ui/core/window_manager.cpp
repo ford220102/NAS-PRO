@@ -1,10 +1,24 @@
-#include "window_manager.h"
-#include <iostream>
+#include <vector>
+#include <string>
 
-void WindowManager::init() {
-    std::cout << "Window Manager initialized\n";
-}
+struct Window {
+    std::string name;
+    bool active;
+};
 
-void WindowManager::openWindow(const char* name) {
-    std::cout << "Opening window: " << name << std::endl;
-}
+class WindowManager {
+public:
+    static std::vector<Window> windows;
+
+    static void createWindow(const std::string& name) {
+        windows.push_back({name, true});
+    }
+
+    static void listWindows() {
+        for (auto &w : windows) {
+            printf("Window: %s\n", w.name.c_str());
+        }
+    }
+};
+
+std::vector<Window> WindowManager::windows;

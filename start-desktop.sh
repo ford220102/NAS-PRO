@@ -1,7 +1,6 @@
 #!/bin/bash
 
-clear
-echo "BOOTING NAS-PRO DESKTOP..."
+echo "NAS-PRO BOOT → GUI SHELL START"
 sleep 1
 
-bash ui/desktop/launcher.sh
+./build-gui/nas-desktop
