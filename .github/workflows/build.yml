@@ -1,0 +1,35 @@
+name: Build NAS-PRO ISO
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    
+    - name: Build app
+      run: |
+        npm ci
+        npm run build
+    
+    - name: Build ISO
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y xorriso squashfs-tools isolinux
+        sudo ./build-final.sh
+    
+    - name: Upload ISO
+      uses: actions/upload-artifact@v4
+      with:
+        name: nas-pro
+        path: nas-pro.iso
