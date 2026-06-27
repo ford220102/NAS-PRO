@@ -1,13 +1,19 @@
-node_modules/
-dist/
-dist-ssr/
-*.local
-.env
-.env.local
-.env.*.local
+# build
+build/
+build-gui/
+cmake-build/
+*.o
+*.obj
+*.exe
+
+# Qt
+*.user
+*.pro.user
+moc_*
+ui_*
+
+# system
 .DS_Store
-*.suo
-*.sw?
-*.iso
-nas-pro.iso
-*.iso
+
+# logs
+*.log
