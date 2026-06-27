@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
-project(nas-pro-desktop)
+project(nas-pro-os)
 
 set(CMAKE_CXX_STANDARD 17)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
-add_executable(nas-desktop final_shell.cpp)
+add_executable(nas-os os_shell.cpp)
 
-target_link_libraries(nas-desktop Qt6::Widgets)
+target_link_libraries(nas-os Qt6::Widgets)
