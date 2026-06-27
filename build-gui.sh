@@ -7,4 +7,4 @@ cd build-gui
 cmake ../ui/desktop
 make -j$(nproc)
 
-echo "NAS-PRO GUI BUILT: ./nas-desktop"
+echo "Built: nas-desktop + nas-login"
