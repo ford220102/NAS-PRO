@@ -1,14 +1,11 @@
-NAS-PRO - Native OS version
+NAS-PRO - Native OS Architecture
 
-This branch removes all Web UI (React/Vite).
-System is being converted to native desktop OS architecture.
+STATUS:
+- Web UI removed
+- Native desktop layer initialized (Qt)
 
-New structure:
-- kernel/        -> system kernel layer
-- init/          -> init system
-- system/        -> core services
-- ui/            -> native desktop UI (Qt/GTK)
-- apps/          -> system applications
-- boot/          -> boot configuration
-- installer/     -> system installer
-- build/         -> ISO build system
+NEXT:
+- window manager
+- taskbar
+- login screen
+- system services integration
