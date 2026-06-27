@@ -1,0 +1,36 @@
+#!/bin/bash
+echo "Installing NAS-PRO packages..."
+
+apt-get install -y \
+    nginx \
+    samba \
+    samba-common \
+    nfs-kernel-server \
+    minidlna \
+    nodejs \
+    npm \
+    openssh-server \
+    net-tools \
+    curl \
+    wget \
+    htop \
+    neofetch \
+    ufw \
+    fail2ban \
+    avahi-daemon \
+    avahi-utils \
+    systemd \
+    dbus \
+    network-manager
+
+# Włączenie usług na starcie
+systemctl enable nginx
+systemctl enable smbd
+systemctl enable nmbd
+systemctl enable nfs-kernel-server
+systemctl enable minidlna
+systemctl enable ssh
+systemctl enable avahi-daemon
+systemctl enable NetworkManager
+systemctl enable nas-firstboot
+systemctl enable nas-pro

@@ -1,0 +1,12 @@
+[Unit]
+Description=NAS-PRO First Boot Configuration
+After=network.target
+Before=nas-pro.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/nas-firstboot.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,2 @@
+/srv/nas/public *(rw,sync,no_subtree_check,no_root_squash)
+/srv/nas/private *(rw,sync,no_subtree_check,no_root_squash)
