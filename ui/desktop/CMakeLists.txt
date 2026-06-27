@@ -5,6 +5,6 @@ set(CMAKE_CXX_STANDARD 17)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
-add_executable(nas-desktop main.cpp)
+add_executable(nas-desktop nas-desktop.cpp)
 
 target_link_libraries(nas-desktop Qt6::Widgets)
