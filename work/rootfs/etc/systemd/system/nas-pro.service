@@ -1,0 +1,10 @@
+[Unit]
+Description=NAS-PRO Desktop Environment
+After=multi-user.target
+
+[Service]
+ExecStart=/usr/local/bin/nas-os
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

@@ -1,7 +1,0 @@
-NAS-PRO APPS:
-- launcher
-- window_manager
-- shell
-- system_info
-- storage
-- network

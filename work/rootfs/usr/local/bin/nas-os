@@ -1,0 +1,4 @@
+#!/bin/bash
+echo "NAS-PRO SYSTEM STARTING (ISO MODE)"
+echo "Launching desktop environment..."
+while true; do sleep 1000; done

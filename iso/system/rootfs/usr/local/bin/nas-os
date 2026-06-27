@@ -1,0 +1,3 @@
+#!/bin/bash
+echo "NAS-PRO DESKTOP START (SIMULATED ROOTFS)"
+while true; do sleep 1000; done
